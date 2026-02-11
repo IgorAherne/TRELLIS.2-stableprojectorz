@@ -1,4 +1,5 @@
 # trellis2/modules/image_feature_extractor.py
+import os
 from typing import *
 import torch
 import torch.nn.functional as F
@@ -7,14 +8,23 @@ from transformers import DINOv3ViTModel
 import numpy as np
 from PIL import Image
 
-
 class DinoV2FeatureExtractor:
     """
     Feature extractor for DINOv2 models.
     """
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, image_size=512):
         self.model_name = model_name
-        self.model = torch.hub.load('facebookresearch/dinov2', model_name, pretrained=True)
+        
+        # Check if we have bundled the model in the MODELS/dinov3 folder
+        # We use absolute path relative to the current working directory
+        local_dir = os.path.join(os.getcwd(), "MODELS", "dinov3")
+        if os.path.exists(os.path.join(local_dir, "config.json")):
+            print(f"[INFO] Gated Repo Redirect: Loading DINOv3 from {local_dir}")
+            model_to_load = local_dir
+        else:
+            model_to_load = model_name
+
+        self.model = DINOv3ViTModel.from_pretrained(model_to_load)
         self.model.eval()
         self.transform = transforms.Compose([
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -63,7 +73,35 @@ class DinoV3FeatureExtractor:
     """
     def __init__(self, model_name: str, image_size=512):
         self.model_name = model_name
-        self.model = DINOv3ViTModel.from_pretrained(model_name)
+        
+        # 1. Check relative to Current Working Directory (Root of repo)
+        cwd_path = os.path.join(os.getcwd(), "MODELS", "dinov3")
+        
+        # 2. Check relative to this script file (Backup in case cwd changes)
+        # file is in trellis2/modules/, so we go up two levels to reach root
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "MODELS", "dinov3"))
+        
+        target_path = None
+        use_local = False
+
+        if os.path.exists(os.path.join(cwd_path, "config.json")):
+            target_path = cwd_path
+            use_local = True
+        elif os.path.exists(os.path.join(script_path, "config.json")):
+            target_path = script_path
+            use_local = True
+        else:
+            target_path = model_name
+            use_local = False
+            
+        if use_local:
+            print(f"[INFO] Local DINOv3 found. Loading from: {target_path}")
+        else:
+            print(f"[INFO] Local DINOv3 NOT found. Attempting download: {model_name}")
+
+        # We pass local_files_only=use_local to strict enforce not touching the internet
+        self.model = DINOv3ViTModel.from_pretrained(target_path, local_files_only=use_local)
+        
         self.model.eval()
         self.image_size = image_size
         self.transform = transforms.Compose([

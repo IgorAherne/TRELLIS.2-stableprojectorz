@@ -4,13 +4,43 @@ from transformers import AutoModelForImageSegmentation
 import torch
 from torchvision import transforms
 from PIL import Image
-
+import os # <--- Added
 
 class BiRefNet:
     def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):
+        
+        # 1. Check relative to Current Working Directory
+        cwd_path = os.path.join(os.getcwd(), "MODELS", "RMBG-2.0")
+        
+        # 2. Check relative to this script file
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "MODELS", "RMBG-2.0"))
+        
+        target_path = None
+        use_local = False
+
+        # We look for model.safetensors or config.json to confirm validity
+        if os.path.exists(os.path.join(cwd_path, "config.json")):
+            target_path = cwd_path
+            use_local = True
+        elif os.path.exists(os.path.join(script_path, "config.json")):
+            target_path = script_path
+            use_local = True
+        else:
+            # Fallback to whatever was passed in (likely briaai/RMBG-2.0 which will fail if not logged in)
+            target_path = model_name
+            use_local = False
+            
+        if use_local:
+            print(f"[INFO] Local RMBG-2.0 found. Loading from: {target_path}")
+        else:
+            print(f"[INFO] Local RMBG-2.0 NOT found. Attempting download/access: {model_name}")
+
         self.model = AutoModelForImageSegmentation.from_pretrained(
-            model_name, trust_remote_code=True
+            target_path, 
+            trust_remote_code=True,
+            local_files_only=use_local # Forces offline mode if local files are found
         )
+        
         self.model.eval()
         self.transform_image = transforms.Compose(
             [
@@ -40,4 +70,3 @@ class BiRefNet:
         mask = pred_pil.resize(image_size)
         image.putalpha(mask)
         return image
-    
