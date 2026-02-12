@@ -6,7 +6,7 @@ import torch.nn as nn
 from .. import SparseTensor
 from . import config
 import flex_gemm
-from flex_gemm.ops.spconv import sparse_submanifold_conv3d
+from flex_gemm.ops.spconv import sparse_submanifold_conv3d, Algorithm 
 
 
 def sparse_conv3d_init(self, in_channels, out_channels, kernel_size, stride=1, dilation=1, padding=None, bias=True, indice_key=None):
@@ -37,7 +37,8 @@ def sparse_conv3d_init(self, in_channels, out_channels, kernel_size, stride=1, d
 
 
 def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
-    flex_gemm.ops.spconv.set_algorithm(config.FLEX_GEMM_ALGO)
+    # overwrite the config setting to ensure we use the backend that doesn't need Triton
+    flex_gemm.ops.spconv.set_algorithm(Algorithm.EXPLICIT_GEMM)
     flex_gemm.ops.spconv.set_hashmap_ratio(config.FLEX_GEMM_HASHMAP_RATIO)
 
     # check if neighbor map is already computed

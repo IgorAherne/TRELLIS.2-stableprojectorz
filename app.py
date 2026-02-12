@@ -3,6 +3,24 @@
 import gradio as gr
 
 import os
+import sys
+
+try:
+    print("[INFO] Patching flex_gemm for Windows compatibility...")
+    import flex_gemm.ops.spconv as spconv
+    from flex_gemm.ops.spconv import Algorithm
+    
+    # Force the algorithm to EXPLICIT_GEMM
+    # This bypasses the 'kernels.triton' error by using standard Torch Matrix Multiplication
+    spconv.ALGORITHM = Algorithm.EXPLICIT_GEMM
+    print("[INFO] Successfully switched flex_gemm to EXPLICIT_GEMM backend.")
+    
+except ImportError:
+    print("[WARNING] Could not patch flex_gemm. If you see Triton errors, this is why.")
+except Exception as e:
+    print(f"[WARNING] Error while patching flex_gemm: {e}")
+
+
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from datetime import datetime
