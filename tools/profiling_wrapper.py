@@ -1,172 +1,201 @@
+# src/rl_agent/utils/profiling_wrapper.py
 import time
 import os
+import sys
 import logging
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
-
-# Reuse your existing processor from the local tools package
 from tools.profiler_python_utils import process_profile_json, process_torch_trace_json
 
 logger = logging.getLogger(__name__)
 
 class AuraProfiler:
-    """
-    Wrapper around pyinstrument AND torch.profiler.
-    Handles start/stop and auto-summarization in a distributed Ray environment.
-    """
-    def __init__(self, log_dir: str, actor_name: str, enabled: bool = True, enable_python: bool = True, enable_torch: bool = True, schedule_config: dict = None):
-        self.enabled = enabled
+    def __init__(self, log_dir: str, actor_name: str, enabled: bool = True, 
+                 enable_python: bool = True, enable_torch: bool = True, 
+                 schedule_config: dict = None, 
+                 delay_sec: float = 0.0, max_duration_sec: float = 0.0, max_events: int = 0):
         
-        # Logic: Master Switch (enabled) must be True for sub-profilers to active
+        self.enabled = enabled
         self.enable_python = enable_python and enabled
         self.enable_torch = enable_torch and enabled
+        self.delay_sec = delay_sec
+        self.max_duration_sec = max_duration_sec
+        self.max_events = max_events
         
-        # If actor_name is empty, use log_dir directly (Standalone mode)
         if actor_name:
             self.log_dir = os.path.join(log_dir, "profiling", actor_name)
         else:
             self.log_dir = log_dir
 
         self.actor_name = actor_name or "Profiler"
-        
         self.py_profiler = None
         self.torch_profiler = None
+        self._is_legacy_torch = False 
+        
+        # Internal State Machine
+        self._state = "IDLE"  # IDLE -> WAITING -> RECORDING -> DONE
+        self._global_start_time = 0.0
+        self._recording_start_time = 0.0
+        self._event_count = 0
 
-        if not self.enabled:
-            return
+        if not self.enabled: return
 
         os.makedirs(self.log_dir, exist_ok=True)
             
-        # 1. Initialize Python Profiler (CPU Logic)
         if self.enable_python:
             try:
                 from pyinstrument import Profiler
-                self.py_profiler = Profiler(interval=0.001) # 1ms resolution
+                self.py_profiler = Profiler(interval=0.001)
             except ImportError:
                 logger.warning("pyinstrument not installed. Python profiling disabled.")
 
-        # 2. Initialize Torch Profiler (GPU/Kernel Logic)
         if self.enable_torch:
             try:
-                # [SAFETY CRITICAL] Prevent massive trace files (7GB+)
-                # We strictly require a schedule. If missing, we DISABLE Torch profiling.
                 if not schedule_config:
-                    logger.warning(f"[{self.actor_name}] Torch Profiler enabled but 'schedule_config' is MISSING. "
-                                   "Disabling Torch Profiler to prevent accidental huge trace files (Continuous Mode).")
                     self.enable_torch = False
-                    self.torch_profiler = None
-                else:
-                    # Activities: CPU (Operators) and CUDA (Kernels)
-                    activities = [ProfilerActivity.CPU]
-                    if torch.cuda.is_available():
-                        activities.append(ProfilerActivity.CUDA)
-
-                    # [STRICT CONFIG] Force KeyError if keys are missing. No defaults.
-                    sch = torch.profiler.schedule(
-                        wait=schedule_config['wait'],
-                        warmup=schedule_config['warmup'],
-                        active=schedule_config['active'],
-                        repeat=schedule_config['repeat']
-                    )
-
-                    self.torch_profiler = profile(
-                        activities=activities,
-                        schedule=sch, 
-                        on_trace_ready=self._on_trace_ready,
+                elif schedule_config.get('repeat', 1) == 0:
+                    self.torch_profiler = torch.autograd.profiler.profile(
+                        use_device='cuda' if torch.cuda.is_available() else 'cpu',
                         record_shapes=True,
-                        # Disable memory to prevent OOM
                         profile_memory=False, 
-                        with_stack=True 
+                        with_stack=True, 
+                        use_kineto=False 
                     )
-            except KeyError as ke:
-                logger.error(f"[{self.actor_name}] Torch Profiler Config Error: Missing key {ke}. Profiling disabled.")
-                self.torch_profiler = None
+                    self._is_legacy_torch = True
+                else:
+                    # Kineto (Distributed Mode) - not used for local generation
+                    pass 
             except Exception as e:
                 logger.error(f"Failed to init Torch Profiler: {e}")
                 self.torch_profiler = None
 
+    def _profiler_hook(self, frame, event, arg):
+        """
+        State Machine running on every Python function call.
+        """
+        if event != 'call': return
+
+        current_time = time.time()
+
+        # State 1: WAITING for Delay
+        if self._state == "WAITING":
+            if (current_time - self._global_start_time) >= self.delay_sec:
+                logger.info(f"[{self.actor_name}] Delay passed. STARTING capture.")
+                self._state = "RECORDING"
+                self._recording_start_time = current_time
+                self._event_count = 0
+                
+                # Actually start the profilers
+                if self.torch_profiler and self._is_legacy_torch:
+                    self.torch_profiler.__enter__()
+                # Note: We keep PyInstrument running the whole time or start here if desired, 
+                # but legacy Torch is the one that needs strict windowing.
+
+        # State 2: RECORDING
+        elif self._state == "RECORDING":
+            self._event_count += 1
+            
+            # Check Limits
+            stop_by_time = (self.max_duration_sec > 0 and (current_time - self._recording_start_time) >= self.max_duration_sec)
+            stop_by_events = (self.max_events > 0 and self._event_count >= self.max_events)
+            
+            if stop_by_time or stop_by_events:
+                reason = "Time" if stop_by_time else "Events"
+                logger.info(f"[{self.actor_name}] Limit reached ({reason}). STOPPING capture and flushing.")
+                
+                self._state = "DONE"
+                
+                # Stop Torch Profiler
+                if self.torch_profiler and self._is_legacy_torch:
+                    self.torch_profiler.__exit__(None, None, None)
+                    self._save_torch_trace(self.torch_profiler, "auto_capture")
+                    self.torch_profiler = None
+                
+                # Remove hook immediately to restore performance
+                sys.setprofile(None)
+
+    def start(self):
+        if not self.enabled: return
+        
+        # Python profiler is lightweight enough to run generally, or we can control it too.
+        if self.py_profiler and not self.py_profiler.is_running:
+            self.py_profiler.start()
+            
+        if self.torch_profiler:
+            if self._is_legacy_torch:
+                # If we have limits or delay, use the hook
+                if self.delay_sec > 0 or self.max_duration_sec > 0 or self.max_events > 0:
+                    self._global_start_time = time.time()
+                    self._state = "WAITING"
+                    sys.setprofile(self._profiler_hook)
+                else:
+                    # No limits, just start
+                    self.torch_profiler.__enter__()
+                    self._state = "RECORDING"
+            else:
+                self.torch_profiler.start()
 
     def step(self):
-        """Must be called every training step to advance the schedule."""
-        if self.enabled and self.torch_profiler:
+        if self.enabled and self.torch_profiler and not self._is_legacy_torch:
             self.torch_profiler.step()
-
-
-    def _on_trace_ready(self, p):
-        """Callback for scheduled traces."""
-        tag = f"step_{p.step_num}"
-        self._save_torch_trace(p, tag)
-
 
     def _save_torch_trace(self, p, tag):
         try:
             trace_path = os.path.join(self.log_dir, f"trace_{tag}.json")
-            try:
-                p.export_chrome_trace(trace_path)
+            if self._is_legacy_torch:
+                logger.info(f"[{self.actor_name}] Exporting legacy trace...")
+
+            try: p.export_chrome_trace(trace_path)
             except (RuntimeError, AssertionError):
-                # AssertionError: Common if stopped mid-schedule before valid data
-                logger.warning(f"[{self.actor_name}] Profiler invalid state or empty. Skipping export.")
                 return
 
             logger.info(f"[{self.actor_name}] Torch trace saved: {trace_path}")
             summary_path = os.path.join(self.log_dir, f"summary_trace_{tag}.txt")
             process_torch_trace_json(trace_path, summary_path)
-            # Remove intermediate JSON after summary is generated
-            if os.path.exists(summary_path):
-                os.remove(trace_path)
-                logger.info(f"[{self.actor_name}] Cleaned up intermediate trace: {trace_path}")
-
+            if os.path.exists(summary_path): os.remove(trace_path)
         except BaseException as e:
             logger.error(f"[{self.actor_name}] Error processing/saving trace: {repr(e)}")
-
 
     def stop_and_save(self, tag: str):
         if not self.enabled: return
 
+        # Ensure hook is removed
+        if sys.getprofile() == self._profiler_hook:
+            sys.setprofile(None)
+
         if self.torch_profiler:
-            try: self.torch_profiler.stop()
+            try: 
+                if self._is_legacy_torch:
+                    # Only exit if we are currently recording
+                    if self._state == "RECORDING":
+                        self.torch_profiler.__exit__(None, None, None)
+                else:
+                    self.torch_profiler.stop()
             except BaseException: pass 
 
-            # [SAFETY FIX] If using a schedule, we rely on _on_trace_ready callback.
-            # Forcing an export here often crashes or corrupts data if the schedule isn't complete.
-            if self.torch_profiler.schedule is None:
+            # If we manually stopped, save whatever we have (unless auto-save already did it)
+            if self.torch_profiler:
                  self._save_torch_trace(self.torch_profiler, tag)
+            self.torch_profiler = None 
 
-        # --- Stop & Save Python Profiler ---
         if self.py_profiler and self.py_profiler.is_running:
             try:
                 self.py_profiler.stop()
-                
-                # 1. Save HTML (Intermediate)
                 html_path = os.path.join(self.log_dir, f"py_profile_{tag}.html")
                 with open(html_path, "w", encoding='utf-8') as f:
                     f.write(self.py_profiler.output_html())
                 
-                # 2. Save JSON (Intermediate — needed for summary generation)
                 json_path = os.path.join(self.log_dir, f"py_profile_{tag}.json")
                 from pyinstrument.renderers import JSONRenderer
                 with open(json_path, "w", encoding='utf-8') as f:
                     f.write(self.py_profiler.output(renderer=JSONRenderer()))
                     
-                # 3. Generate Summary Text
                 summary_path = os.path.join(self.log_dir, f"summary_{tag}.txt")
                 process_profile_json(json_path, summary_path)
                 
-                # Remove intermediate .json and .html after summary is generated
                 if os.path.exists(summary_path):
                     os.remove(json_path)
                     os.remove(html_path)
-                    logger.info(f"[{self.actor_name}] Cleaned up intermediate files: {json_path}, {html_path}")
-
                 self.py_profiler.reset()
             except BaseException as e:
                 logger.error(f"[{self.actor_name}] Error saving python profile: {e}")
-    
-    def start(self):
-        if not self.enabled: return
-        # Start Python Profiler
-        if self.py_profiler and not self.py_profiler.is_running:
-            self.py_profiler.start()
-        # Start Torch Profiler
-        if self.torch_profiler:
-            self.torch_profiler.start()

@@ -210,3 +210,5 @@ __marimo__/
 /.vs
 /.vs
 /.vs
+tmp/profiling/sync_report.txt
+tmp/profiling/summary_trace_inference_run.txt
