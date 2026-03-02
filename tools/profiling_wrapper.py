@@ -6,7 +6,7 @@ import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
 # Reuse your existing processor from the World Model
-from profiler_python_utils import process_profile_json,  process_torch_trace_json
+from world_model.utils.profiler_python_utils import process_profile_json,  process_torch_trace_json
 
 logger = logging.getLogger(__name__)
 
@@ -86,15 +86,18 @@ class AuraProfiler:
                 logger.error(f"Failed to init Torch Profiler: {e}")
                 self.torch_profiler = None
 
+
     def step(self):
         """Must be called every training step to advance the schedule."""
         if self.enabled and self.torch_profiler:
             self.torch_profiler.step()
 
+
     def _on_trace_ready(self, p):
         """Callback for scheduled traces."""
         tag = f"step_{p.step_num}"
         self._save_torch_trace(p, tag)
+
 
     def _save_torch_trace(self, p, tag):
         try:
@@ -109,9 +112,14 @@ class AuraProfiler:
             logger.info(f"[{self.actor_name}] Torch trace saved: {trace_path}")
             summary_path = os.path.join(self.log_dir, f"summary_trace_{tag}.txt")
             process_torch_trace_json(trace_path, summary_path)
-            
+            # Remove intermediate JSON after summary is generated
+            if os.path.exists(summary_path):
+                os.remove(trace_path)
+                logger.info(f"[{self.actor_name}] Cleaned up intermediate trace: {trace_path}")
+
         except BaseException as e:
             logger.error(f"[{self.actor_name}] Error processing/saving trace: {repr(e)}")
+
 
     def stop_and_save(self, tag: str):
         if not self.enabled: return
@@ -130,12 +138,12 @@ class AuraProfiler:
             try:
                 self.py_profiler.stop()
                 
-                # 1. Save HTML (Interactive)
+                # 1. Save HTML (Intermediate)
                 html_path = os.path.join(self.log_dir, f"py_profile_{tag}.html")
                 with open(html_path, "w", encoding='utf-8') as f:
                     f.write(self.py_profiler.output_html())
                 
-                # 2. Save JSON (Raw)
+                # 2. Save JSON (Intermediate — needed for summary generation)
                 json_path = os.path.join(self.log_dir, f"py_profile_{tag}.json")
                 from pyinstrument.renderers import JSONRenderer
                 with open(json_path, "w", encoding='utf-8') as f:
@@ -145,6 +153,12 @@ class AuraProfiler:
                 summary_path = os.path.join(self.log_dir, f"summary_{tag}.txt")
                 process_profile_json(json_path, summary_path)
                 
+                # Remove intermediate .json and .html after summary is generated
+                if os.path.exists(summary_path):
+                    os.remove(json_path)
+                    os.remove(html_path)
+                    logger.info(f"[{self.actor_name}] Cleaned up intermediate files: {json_path}, {html_path}")
+
                 self.py_profiler.reset()
             except BaseException as e:
                 logger.error(f"[{self.actor_name}] Error saving python profile: {e}")
