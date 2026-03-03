@@ -27,6 +27,10 @@ except Exception as e:
 
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.disable()
+
 from datetime import datetime
 import shutil
 import cv2
@@ -644,17 +648,17 @@ def create_input_panel():
             with gr.Row():
                 profiler_delay_sec = gr.Slider(
                     label="Start Delay (seconds)", 
-                    minimum=0, maximum=300, value=15, step=5,
+                    minimum=0, maximum=300, value=80, step=5,
                     info="Wait X seconds before starting to record."
                 )
                 profiler_max_duration_sec = gr.Slider(
                     label="Recording Duration (seconds)", 
-                    minimum=0, maximum=60, value=2, step=1,
+                    minimum=0, maximum=60, value=3, step=1,
                     info="Stop recording after X seconds (0 = unlimited)."
                 )
             profiler_max_events = gr.Slider(
                 label="Max Events (Datapoints)", 
-                minimum=0, maximum=5000, value=100, step=50,
+                minimum=0, maximum=5000, value=300, step=50,
                 info="Stop recording after N operations (0 = unlimited)."
             )
 

@@ -72,7 +72,7 @@ def manual_cast(tensor, dtype):
     Cast if autocast is not enabled.
     """
     if not torch.is_autocast_enabled():
-        return tensor.type(dtype)
+        return tensor.to(dtype)
     return tensor
 
 

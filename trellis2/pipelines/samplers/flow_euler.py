@@ -119,11 +119,17 @@ class FlowEulerSampler(Sampler):
         t_seq = t_seq.tolist()
         t_pairs = list((t_seq[i], t_seq[i + 1]) for i in range(steps))
         ret = edict({"samples": None, "pred_x_t": [], "pred_x_0": []})
-        for t, t_prev in tqdm(t_pairs, desc=tqdm_desc, disable=not verbose):
+        
+        import time as _time
+
+        for i, (t, t_prev) in enumerate(tqdm(t_pairs, desc=tqdm_desc, disable=not verbose)):
+            _t0 = _time.time()
             out = self.sample_once(model, sample, t, t_prev, cond, **kwargs)
+            print(f"[TIMING] {tqdm_desc} step {i}: {_time.time()-_t0:.2f}s")
             sample = out.pred_x_prev
             ret.pred_x_t.append(out.pred_x_prev)
             ret.pred_x_0.append(out.pred_x_0)
+            _time.sleep(0)  # Yield GIL to Gradio's event loop
         ret.samples = sample
         return ret
 

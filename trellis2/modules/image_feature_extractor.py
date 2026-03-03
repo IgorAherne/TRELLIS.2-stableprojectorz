@@ -32,8 +32,8 @@ class DinoV2FeatureExtractor:
 
     def to(self, device):
         self.model.to(device)
-        self._norm_mean = self._norm_mean.to(device)
-        self._norm_std = self._norm_std.to(device)
+        self._norm_mean = self._norm_mean.to(device, non_blocking=True)
+        self._norm_std = self._norm_std.to(device, non_blocking=True)
 
     def cuda(self):
         self.model.cuda()
@@ -42,8 +42,8 @@ class DinoV2FeatureExtractor:
 
     def cpu(self):
         self.model.cpu()
-        self._norm_mean = self._norm_mean.cpu()
-        self._norm_std = self._norm_std.cpu()
+        self._norm_mean = self._norm_mean.to('cpu', non_blocking=True)
+        self._norm_std = self._norm_std.to('cpu', non_blocking=True)
     
     @torch.no_grad()
     def __call__(self, image: Union[torch.Tensor, List[Image.Image]]) -> torch.Tensor:
@@ -63,7 +63,7 @@ class DinoV2FeatureExtractor:
             image = [i.resize((518, 518), Image.LANCZOS) for i in image]
             image = [np.array(i.convert('RGB')).astype(np.float32) / 255 for i in image]
             image = [torch.from_numpy(i).permute(2, 0, 1).float() for i in image]
-            image = torch.stack(image).cuda()
+            image = torch.stack(image).to(self._norm_mean.device, non_blocking=True)
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         
@@ -115,8 +115,8 @@ class DinoV3FeatureExtractor:
 
     def to(self, device):
         self.model.to(device)
-        self._norm_mean = self._norm_mean.to(device)
-        self._norm_std = self._norm_std.to(device)
+        self._norm_mean = self._norm_mean.to(device, non_blocking=True)
+        self._norm_std = self._norm_std.to(device, non_blocking=True)
 
     def cuda(self):
         self.model.cuda()
@@ -125,8 +125,8 @@ class DinoV3FeatureExtractor:
 
     def cpu(self):
         self.model.cpu()
-        self._norm_mean = self._norm_mean.cpu()
-        self._norm_std = self._norm_std.cpu()
+        self._norm_mean = self._norm_mean.to('cpu', non_blocking=True)
+        self._norm_std = self._norm_std.to('cpu', non_blocking=True)
 
     def extract_features(self, image: torch.Tensor) -> torch.Tensor:
         image = image.to(self.model.embeddings.patch_embeddings.weight.dtype)
@@ -159,7 +159,7 @@ class DinoV3FeatureExtractor:
             image = [i.resize((self.image_size, self.image_size), Image.LANCZOS) for i in image]
             image = [np.array(i.convert('RGB')).astype(np.float32) / 255 for i in image]
             image = [torch.from_numpy(i).permute(2, 0, 1).float() for i in image]
-            image = torch.stack(image).cuda()
+            image = torch.stack(image).to(self._norm_mean.device, non_blocking=True)
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         

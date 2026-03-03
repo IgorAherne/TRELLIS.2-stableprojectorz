@@ -116,6 +116,12 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             self.image_cond_model.to(device)
             if self.rembg_model is not None:
                 self.rembg_model.to(device)
+        else:
+            # Keep decoders resident on GPU — they're small (~0.9GB each)
+            # and this avoids repeated load/offload cycles
+            for name, model in self.models.items():
+                if 'decoder' in name:
+                    model.to(device)
 
     def preprocess_image(self, input: Image.Image) -> Image.Image:
         """
@@ -191,13 +197,17 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             sampler_params (dict): Additional parameters for the sampler.
         """
         # Sample sparse structure latent
+        import time
         flow_model = self.models['sparse_structure_flow_model']
         reso = flow_model.resolution
         in_channels = flow_model.in_channels
         noise = torch.randn(num_samples, in_channels, reso, reso, reso, device=self.device)
         sampler_params = {**self.sparse_structure_sampler_params, **sampler_params}
+        _t0 = time.time()
         if self.low_vram:
             flow_model.to(self.device)
+        print(f"[TIMING] sparse_structure_flow_model.to(device): {time.time()-_t0:.2f}s")
+        _t0 = time.time()
         z_s = self.sparse_structure_sampler.sample(
             flow_model,
             noise,
@@ -206,13 +216,14 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             verbose=True,
             tqdm_desc="Sampling sparse structure",
         ).samples
+        print(f"[TIMING] sparse_structure sampling (all steps): {time.time()-_t0:.2f}s")
+        _t0 = time.time()
         if self.low_vram:
             flow_model.cpu()
+        print(f"[TIMING] sparse_structure_flow_model.cpu(): {time.time()-_t0:.2f}s")
         
         # Decode sparse structure latent
         decoder = self.models['sparse_structure_decoder']
-        if self.low_vram:
-            decoder.to(self.device)
         decoded = decoder(z_s)>0
         if self.low_vram:
             decoder.cpu()
@@ -306,13 +317,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         slat = slat * std + mean
         
         # Upsample
-        if self.low_vram:
-            self.models['shape_slat_decoder'].to(self.device)
-            self.models['shape_slat_decoder'].low_vram = True
         hr_coords = self.models['shape_slat_decoder'].upsample(slat, upsample_times=4)
-        if self.low_vram:
-            self.models['shape_slat_decoder'].cpu()
-            self.models['shape_slat_decoder'].low_vram = False
         hr_resolution = resolution
         while True:
             quant_coords = torch.cat([
@@ -369,13 +374,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             List[SparseTensor]: The decoded substructures.
         """
         self.models['shape_slat_decoder'].set_resolution(resolution)
-        if self.low_vram:
-            self.models['shape_slat_decoder'].to(self.device)
-            self.models['shape_slat_decoder'].low_vram = True
         ret = self.models['shape_slat_decoder'](slat, return_subs=True)
-        if self.low_vram:
-            self.models['shape_slat_decoder'].cpu()
-            self.models['shape_slat_decoder'].low_vram = False
         return ret
     
     def sample_tex_slat(
@@ -436,11 +435,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         Returns:
             List[SparseTensor]: The decoded texture voxels
         """
-        if self.low_vram:
-            self.models['tex_slat_decoder'].to(self.device)
         ret = self.models['tex_slat_decoder'](slat, guide_subs=subs) * 0.5 + 0.5
-        if self.low_vram:
-            self.models['tex_slat_decoder'].cpu()
         return ret
     
     @torch.no_grad()
@@ -526,10 +521,16 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         
         if preprocess_image:
             image = self.preprocess_image(image)
+        import time; _t0 = time.time()
         torch.manual_seed(seed)
+        print(f"[TIMING] manual_seed: {time.time()-_t0:.2f}s")
+        _t0 = time.time()
         if self.low_vram:
             self.image_cond_model.to(self.device)
+        print(f"[TIMING] image_cond_model.to(device): {time.time()-_t0:.2f}s")
+        _t0 = time.time()
         cond_512 = self.get_cond([image], 512)
+        print(f"[TIMING] get_cond(512): {time.time()-_t0:.2f}s")
         cond_1024 = self.get_cond([image], 1024) if pipeline_type != '512' else None
         if self.low_vram:
             self.image_cond_model.cpu()
