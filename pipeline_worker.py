@@ -108,16 +108,37 @@ def _worker_main(cmd_queue, result_queue):
 
         elif action == "generate":
             try:
-                outputs, latents = pipeline.run(
-                    cmd["image"],
-                    seed=cmd["seed"],
-                    preprocess_image=False,
-                    sparse_structure_sampler_params=cmd["ss_params"],
-                    shape_slat_sampler_params=cmd["shape_params"],
-                    tex_slat_sampler_params=cmd["tex_params"],
-                    pipeline_type=cmd["pipeline_type"],
-                    return_latent=True,
+                from tools.profiling_wrapper import AuraProfiler
+                from tools.sync_hunter import hunt_syncs
+                prof_cfg = cmd["profiling"]
+                prof_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp', 'profiling')
+                master_enabled = prof_cfg["enable_python"] or prof_cfg["enable_torch"]
+                profiler = AuraProfiler(
+                    log_dir=prof_dir,
+                    actor_name="",
+                    enabled=master_enabled,
+                    enable_python=prof_cfg["enable_python"],
+                    enable_torch=prof_cfg["enable_torch"],
+                    schedule_config={"wait": 0, "warmup": 0, "active": 10000, "repeat": 0},
+                    delay_sec=prof_cfg["delay_sec"],
+                    max_duration_sec=prof_cfg["max_duration_sec"],
+                    max_events=prof_cfg["max_events"],
                 )
+                with hunt_syncs(enabled=prof_cfg["enable_sync_hunter"],
+                                log_file=os.path.join(prof_dir, "sync_report.txt")):
+                    profiler.start()
+                    outputs, latents = pipeline.run(
+                        cmd["image"],
+                        seed=cmd["seed"],
+                        preprocess_image=False,
+                        sparse_structure_sampler_params=cmd["ss_params"],
+                        shape_slat_sampler_params=cmd["shape_params"],
+                        tex_slat_sampler_params=cmd["tex_params"],
+                        pipeline_type=cmd["pipeline_type"],
+                        return_latent=True,
+                    )
+                    profiler.step()
+                profiler.stop_and_save("inference_run")
                 mesh = outputs[0]
                 mesh.simplify(16777216)  # nvdiffrast limit
                 images = render_utils.render_snapshot(
@@ -196,7 +217,7 @@ class PipelineWorker:
             raise RuntimeError(result["error"])
         return result["image"]
 
-    def generate(self, image, seed, ss_params, shape_params, tex_params, pipeline_type, nviews):
+    def generate(self, image, seed, ss_params, shape_params, tex_params, pipeline_type, nviews, profiling=None):
         self.cmd_queue.put({
             "action": "generate",
             "image": image,
@@ -206,6 +227,7 @@ class PipelineWorker:
             "tex_params": tex_params,
             "pipeline_type": pipeline_type,
             "nviews": nviews,
+            "profiling": profiling or {},
         })
         result = self.result_queue.get(timeout=600)
         if result["status"] == "error":

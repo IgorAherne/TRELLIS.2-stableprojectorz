@@ -356,6 +356,12 @@ def image_to_3d(
     tex_slat_guidance_rescale: float,
     tex_slat_sampling_steps: int,
     tex_slat_rescale_t: float,
+    enable_python_profiling: bool,
+    enable_torch_profiling: bool,
+    enable_sync_hunter: bool,
+    profiler_delay_sec: float,
+    profiler_max_duration_sec: float,
+    profiler_max_events: int,
     req: gr.Request,
 ) -> str:
     try:
@@ -386,6 +392,14 @@ def image_to_3d(
                 "1536": "1536_cascade",
             }[resolution],
             nviews=STEPS,
+            profiling={
+                "enable_python": enable_python_profiling,
+                "enable_torch": enable_torch_profiling,
+                "enable_sync_hunter": enable_sync_hunter,
+                "delay_sec": profiler_delay_sec,
+                "max_duration_sec": profiler_max_duration_sec,
+                "max_events": profiler_max_events,
+            },
         )
     except Exception as e:
         print(f"[ERROR] Generation failed: {e}")
@@ -513,7 +527,30 @@ def create_input_panel():
                 tex_slat_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=1.0, step=0.1)
                 tex_slat_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.0, step=0.01)
                 tex_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
-                tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)                
+                tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)
+
+        with gr.Accordion(label="Debugging & Profiling", open=False):
+            gr.Markdown("Performance profiles and sync logs will be stored in `./tmp/profiling`.")
+            with gr.Row():
+                enable_python_profiling = gr.Checkbox(label="Enable Python Profiler", value=False)
+                enable_torch_profiling = gr.Checkbox(label="Enable PyTorch Profiler", value=False)
+                enable_sync_hunter = gr.Checkbox(label="Enable CUDA Sync Hunter", value=False)
+            with gr.Row():
+                profiler_delay_sec = gr.Slider(
+                    label="Start Delay (seconds)",
+                    minimum=0, maximum=300, value=80, step=5,
+                    info="Wait X seconds before starting to record."
+                )
+                profiler_max_duration_sec = gr.Slider(
+                    label="Recording Duration (seconds)",
+                    minimum=0, maximum=60, value=3, step=1,
+                    info="Stop recording after X seconds (0 = unlimited)."
+                )
+            profiler_max_events = gr.Slider(
+                label="Max Events (Datapoints)",
+                minimum=0, maximum=5000, value=300, step=50,
+                info="Stop recording after N operations (0 = unlimited)."
+            )
 
     return {
         "image_prompt": image_prompt,
@@ -535,6 +572,12 @@ def create_input_panel():
         "tex_slat_guidance_rescale": tex_slat_guidance_rescale,
         "tex_slat_sampling_steps": tex_slat_sampling_steps,
         "tex_slat_rescale_t": tex_slat_rescale_t,
+        "enable_python_profiling": enable_python_profiling,
+        "enable_torch_profiling": enable_torch_profiling,
+        "enable_sync_hunter": enable_sync_hunter,
+        "profiler_delay_sec": profiler_delay_sec,
+        "profiler_max_duration_sec": profiler_max_duration_sec,
+        "profiler_max_events": profiler_max_events,
     }
 
 def create_preview_panel():
@@ -613,6 +656,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             inputs["ss_guidance_strength"], inputs["ss_guidance_rescale"], inputs["ss_sampling_steps"], inputs["ss_rescale_t"],
             inputs["shape_slat_guidance_strength"], inputs["shape_slat_guidance_rescale"], inputs["shape_slat_sampling_steps"], inputs["shape_slat_rescale_t"],
             inputs["tex_slat_guidance_strength"], inputs["tex_slat_guidance_rescale"], inputs["tex_slat_sampling_steps"], inputs["tex_slat_rescale_t"],
+            inputs["enable_python_profiling"], inputs["enable_torch_profiling"], inputs["enable_sync_hunter"],
+            inputs["profiler_delay_sec"], inputs["profiler_max_duration_sec"], inputs["profiler_max_events"],
         ],
         outputs=[output_buf, outputs["preview_output"]],
     )
