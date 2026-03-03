@@ -1,67 +1,25 @@
 # File: app.py
 # app.py
+import os
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
+
 import gradio as gr
 
-import os
 import sys
-
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from tools.profiling_wrapper import AuraProfiler
-from tools.sync_hunter import hunt_syncs
-
-try:
-    print("[INFO] Patching flex_gemm for Windows compatibility...")
-    import flex_gemm.ops.spconv as spconv
-    from flex_gemm.ops.spconv import Algorithm
-    
-    # Force the algorithm to EXPLICIT_GEMM
-    # This bypasses the 'kernels.triton' error by using standard Torch Matrix Multiplication
-    spconv.ALGORITHM = Algorithm.EXPLICIT_GEMM
-    print("[INFO] Successfully switched flex_gemm to EXPLICIT_GEMM backend.")
-    
-except ImportError:
-    print("[WARNING] Could not patch flex_gemm. If you see Triton errors, this is why.")
-except Exception as e:
-    print(f"[WARNING] Error while patching flex_gemm: {e}")
-
-
-os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
-torch._dynamo.disable()
 
 from datetime import datetime
 import shutil
-import cv2
 from typing import *
-import torch
 import numpy as np
 from PIL import Image
 
 import base64
 import io
-import threading
-import ctypes
 
-class ProfilerTimeoutException(Exception):
-    pass
-
-def _trigger_timeout(target_tid):
-    print(f"\n[INFO] ⏱️ Profiling timeout reached! Injecting interrupt into thread {target_tid} to safely dump data...")
-    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(target_tid), ctypes.py_object(ProfilerTimeoutException))
-    if res == 0:
-        print("[WARNING] Failed to interrupt thread.")
-    elif res > 1:
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(target_tid), 0)
-
+from pipeline_worker import PipelineWorker
 from trellis2.modules.sparse import SparseTensor
-
-from trellis2.pipelines import Trellis2ImageTo3DPipeline
-from trellis2.renderers import EnvMap
-from trellis2.utils import render_utils
-import o_voxel
-
+import torch
 
 MAX_SEED = np.iinfo(np.int32).max
 TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
@@ -353,17 +311,7 @@ def end_session(req: gr.Request):
 
 
 def preprocess_image(image: Image.Image) -> Image.Image:
-    """
-    Preprocess the input image.
-
-    Args:
-        image (Image.Image): The input image.
-
-    Returns:
-        Image.Image: The preprocessed image.
-    """
-    processed_image = pipeline.preprocess_image(image)
-    return processed_image
+    return worker.preprocess(image)
 
 
 def pack_state(latents: Tuple[SparseTensor, SparseTensor, int]) -> dict:
@@ -408,92 +356,41 @@ def image_to_3d(
     tex_slat_guidance_rescale: float,
     tex_slat_sampling_steps: int,
     tex_slat_rescale_t: float,
-    enable_python_profiling: bool,  
-    enable_torch_profiling: bool,   
-    enable_sync_hunter: bool,
-    profiler_delay_sec: float,         # [ADJUSTMENT]
-    profiler_max_duration_sec: float,  
-    profiler_max_events: int,
     req: gr.Request,
-    progress=gr.Progress(track_tqdm=True),
 ) -> str:
-    # --- Profiling Setup ---
-    prof_dir = os.path.join(TMP_DIR, "profiling")
-    
-    master_enabled = enable_python_profiling or enable_torch_profiling
-    profiler = AuraProfiler(
-        log_dir=prof_dir,
-        actor_name="", 
-        enabled=master_enabled,
-        enable_python=enable_python_profiling,
-        enable_torch=enable_torch_profiling,
-        schedule_config={"wait": 0, "warmup": 0, "active": 10000, "repeat": 0},
-        delay_sec=profiler_delay_sec,
-        max_duration_sec=profiler_max_duration_sec,
-        max_events=profiler_max_events
-    )
-    
-    timer = None
-    current_tid = threading.get_ident()
-    # Calculate total time before injecting the abort exception
-    if master_enabled and profiler_max_duration_sec > 0:
-        total_time_until_abort = profiler_delay_sec + profiler_max_duration_sec
-        timer = threading.Timer(total_time_until_abort, _trigger_timeout, args=(current_tid,))
-    
     try:
-        with hunt_syncs(enabled=enable_sync_hunter, log_file=os.path.join(prof_dir, "sync_report.txt")):
-            profiler.start()
-            if timer: timer.start()
-            
-            # --- Sampling ---
-            outputs, latents = pipeline.run(
-                image,
-                seed=seed,
-                preprocess_image=False,
-                sparse_structure_sampler_params={
-                    "steps": ss_sampling_steps,
-                    "guidance_strength": ss_guidance_strength,
-                    "guidance_rescale": ss_guidance_rescale,
-                    "rescale_t": ss_rescale_t,
-                },
-                shape_slat_sampler_params={
-                    "steps": shape_slat_sampling_steps,
-                    "guidance_strength": shape_slat_guidance_strength,
-                    "guidance_rescale": shape_slat_guidance_rescale,
-                    "rescale_t": shape_slat_rescale_t,
-                },
-                tex_slat_sampler_params={
-                    "steps": tex_slat_sampling_steps,
-                    "guidance_strength": tex_slat_guidance_strength,
-                    "guidance_rescale": tex_slat_guidance_rescale,
-                    "rescale_t": tex_slat_rescale_t,
-                },
-                pipeline_type={
-                    "512": "512",
-                    "1024": "1024_cascade",
-                    "1536": "1536_cascade",
-                }[resolution],
-                return_latent=True,
-            )
-            
-            profiler.step()
-            
-    except (ProfilerTimeoutException, KeyboardInterrupt):
-        print("[INFO] Generation successfully interrupted. Flushing profiler logs...")
-        return {}, empty_html
+        state, images = worker.generate(
+            image=image,
+            seed=seed,
+            ss_params={
+                "steps": ss_sampling_steps,
+                "guidance_strength": ss_guidance_strength,
+                "guidance_rescale": ss_guidance_rescale,
+                "rescale_t": ss_rescale_t,
+            },
+            shape_params={
+                "steps": shape_slat_sampling_steps,
+                "guidance_strength": shape_slat_guidance_strength,
+                "guidance_rescale": shape_slat_guidance_rescale,
+                "rescale_t": shape_slat_rescale_t,
+            },
+            tex_params={
+                "steps": tex_slat_sampling_steps,
+                "guidance_strength": tex_slat_guidance_strength,
+                "guidance_rescale": tex_slat_guidance_rescale,
+                "rescale_t": tex_slat_rescale_t,
+            },
+            pipeline_type={
+                "512": "512",
+                "1024": "1024_cascade",
+                "1536": "1536_cascade",
+            }[resolution],
+            nviews=STEPS,
+        )
     except Exception as e:
         print(f"[ERROR] Generation failed: {e}")
         return {}, empty_html
-    finally:
-        if timer: timer.cancel()
-        profiler.stop_and_save("inference_run")
 
-    mesh = outputs[0]
-    mesh.simplify(16777216) # nvdiffrast limit
-    images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
-    state = pack_state(latents)
-    torch.cuda.empty_cache()
-    
     # --- HTML Construction ---
     # The Stack of 48 Images
     images_html = ""
@@ -556,7 +453,6 @@ def image_to_3d(
         </div>
     </div>
     """
-    
     return state, full_html
 
 
@@ -565,7 +461,6 @@ def extract_glb(
     decimation_target: int,
     texture_size: int,
     req: gr.Request,
-    progress=gr.Progress(track_tqdm=True),
 ) -> Tuple[str, str]:
     """
     Extract a GLB file from the 3D model.
@@ -579,29 +474,11 @@ def extract_glb(
         str: The path to the extracted GLB file.
     """
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
-    shape_slat, tex_slat, res = unpack_state(state)
-    mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
-    glb = o_voxel.postprocess.to_glb(
-        vertices=mesh.vertices,
-        faces=mesh.faces,
-        attr_volume=mesh.attrs,
-        coords=mesh.coords,
-        attr_layout=pipeline.pbr_attr_layout,
-        grid_size=res,
-        aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-        decimation_target=decimation_target,
-        texture_size=texture_size,
-        remesh=True,
-        remesh_band=1,
-        remesh_project=0,
-        use_tqdm=True,
-    )
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%dT%H%M%S") + f".{now.microsecond // 1000:03d}"
     os.makedirs(user_dir, exist_ok=True)
     glb_path = os.path.join(user_dir, f'sample_{timestamp}.glb')
-    glb.export(glb_path, extension_webp=True)
-    torch.cuda.empty_cache()
+    worker.extract_glb(state, decimation_target, texture_size, glb_path)
     return glb_path, glb_path
 
 
@@ -638,30 +515,6 @@ def create_input_panel():
                 tex_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
                 tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)                
 
-        with gr.Accordion(label="Debugging & Profiling", open=False):
-            gr.Markdown("Performance profiles and sync logs will be stored in `./tmp/profiling`.")
-            with gr.Row():
-                enable_python_profiling = gr.Checkbox(label="Enable Python Profiler", value=False)
-                enable_torch_profiling = gr.Checkbox(label="Enable PyTorch Profiler", value=False)
-                enable_sync_hunter = gr.Checkbox(label="Enable CUDA Sync Hunter", value=False)
-            
-            with gr.Row():
-                profiler_delay_sec = gr.Slider(
-                    label="Start Delay (seconds)", 
-                    minimum=0, maximum=300, value=80, step=5,
-                    info="Wait X seconds before starting to record."
-                )
-                profiler_max_duration_sec = gr.Slider(
-                    label="Recording Duration (seconds)", 
-                    minimum=0, maximum=60, value=3, step=1,
-                    info="Stop recording after X seconds (0 = unlimited)."
-                )
-            profiler_max_events = gr.Slider(
-                label="Max Events (Datapoints)", 
-                minimum=0, maximum=5000, value=300, step=50,
-                info="Stop recording after N operations (0 = unlimited)."
-            )
-
     return {
         "image_prompt": image_prompt,
         "resolution": resolution,
@@ -682,12 +535,6 @@ def create_input_panel():
         "tex_slat_guidance_rescale": tex_slat_guidance_rescale,
         "tex_slat_sampling_steps": tex_slat_sampling_steps,
         "tex_slat_rescale_t": tex_slat_rescale_t,
-        "enable_python_profiling": enable_python_profiling,
-        "enable_torch_profiling": enable_torch_profiling,
-        "enable_sync_hunter": enable_sync_hunter,
-        "profiler_delay_sec": profiler_delay_sec,          
-        "profiler_max_duration_sec": profiler_max_duration_sec,
-        "profiler_max_events": profiler_max_events,
     }
 
 def create_preview_panel():
@@ -766,8 +613,6 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             inputs["ss_guidance_strength"], inputs["ss_guidance_rescale"], inputs["ss_sampling_steps"], inputs["ss_rescale_t"],
             inputs["shape_slat_guidance_strength"], inputs["shape_slat_guidance_rescale"], inputs["shape_slat_sampling_steps"], inputs["shape_slat_rescale_t"],
             inputs["tex_slat_guidance_strength"], inputs["tex_slat_guidance_rescale"], inputs["tex_slat_sampling_steps"], inputs["tex_slat_rescale_t"],
-            inputs["enable_python_profiling"], inputs["enable_torch_profiling"], inputs["enable_sync_hunter"], 
-            inputs["profiler_delay_sec"], inputs["profiler_max_duration_sec"],
         ],
         outputs=[output_buf, outputs["preview_output"]],
     )
@@ -791,22 +636,6 @@ if __name__ == "__main__":
         icon = Image.open(MODES[i]['icon'])
         MODES[i]['icon_base64'] = image_to_base64(icon)
 
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
-    
-    envmap = {
-        'forest': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/forest.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'sunset': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/sunset.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'courtyard': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/courtyard.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-    }
+    worker = PipelineWorker()
     
     demo.launch(css=css, head=head)
