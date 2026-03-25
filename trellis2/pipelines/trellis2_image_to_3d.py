@@ -12,6 +12,26 @@ from ..modules import image_feature_extractor
 from ..representations import Mesh, MeshWithVoxel
 
 
+class _LazyCudaSubs:
+    """Keeps subs on CPU; moves each to GPU on access, frees the previous one."""
+    def __init__(self, subs_cpu, device):
+        self._subs = subs_cpu  # list of SparseTensors on CPU
+        self._device = device
+        self._prev_idx = None
+
+    def __getitem__(self, i):
+        # Free the previous sub from GPU
+        if self._prev_idx is not None and self._prev_idx != i:
+            self._subs[self._prev_idx] = self._subs[self._prev_idx].to('cpu')
+            torch.cuda.empty_cache()
+        self._prev_idx = i
+        self._subs[i] = self._subs[i].to(self._device)
+        return self._subs[i]
+
+    def __len__(self):
+        return len(self._subs)
+
+
 class Trellis2ImageTo3DPipeline(Pipeline):
     """
     Pipeline for inferring Trellis2 image-to-3D models.
@@ -500,6 +520,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
 
         # Offload subs to CPU between decoder phases
         subs = [s.to('cpu') for s in subs]
+        torch.cuda.empty_cache()
 
         # 2. Load texture decoder, run, and clear
         tex_dec = self.models['tex_slat_decoder']
@@ -509,8 +530,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             tex_dec.to(self.device)
         
-        # Move subs back to GPU just before use
-        subs = [s.to(self.device) for s in subs]
+        # Wrap subs for lazy one-at-a-time GPU loading
+        subs = _LazyCudaSubs(subs, self.device)
 
         torch.cuda.reset_peak_memory_stats()
         tex_voxels = self.decode_tex_slat(tex_slat, subs)

@@ -82,7 +82,6 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
         else:
             output[start:end] = torch.mm(chunk_im2col, weight_mat)
 
-    torch.cuda.empty_cache()
     out = x.replace(output)
     return out
 

@@ -172,6 +172,7 @@ class SparseResBlockUpsample3d(nn.Module):
             return h
     
     def forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
+        torch.cuda.empty_cache()
         if self.use_checkpoint:
             return torch.utils.checkpoint.checkpoint(self._forward, x, use_reentrant=False)
         else:
@@ -258,6 +259,7 @@ class SparseResBlockC2S3d(nn.Module):
             return h
     
     def forward(self, x: sp.SparseTensor, subdiv: sp.SparseTensor = None) -> sp.SparseTensor:
+        torch.cuda.empty_cache()
         if self.use_checkpoint:
             return torch.utils.checkpoint.checkpoint(self._forward, x, subdiv, use_reentrant=False)
         else:
