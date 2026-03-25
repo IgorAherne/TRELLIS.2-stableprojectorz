@@ -194,6 +194,12 @@ def _worker_main(cmd_queue, result_queue):
                 mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
                 mesh.attrs = mesh.attrs.float()
                 
+                # Free everything possible before heavy GLB postprocessing
+                del shape_slat, tex_slat, state
+                for name, model in pipeline.models.items():
+                    model.cpu()
+                torch.cuda.empty_cache()
+                
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices,
                     faces=mesh.faces,

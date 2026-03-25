@@ -701,6 +701,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             torch.cuda.empty_cache()
 
         torch.cuda.empty_cache()
+
+        # Clear flow model neighbor caches from latent SparseTensors — no longer needed
+        shape_slat._spatial_cache = {}
+        tex_slat._spatial_cache = {}
         
         # Decode the generated latents into the final mesh
         out_mesh = self.decode_latent(shape_slat, tex_slat, res)
