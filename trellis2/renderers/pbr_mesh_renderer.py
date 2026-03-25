@@ -472,8 +472,6 @@ class PbrMeshRenderer:
                     for e in envmap.values()
                 ], dim=0)
 
-                print(f"[SHAPES] pos={pos.shape} gb_normal={gb_normal.shape} gb_basecolor={gb_basecolor.shape} gb_orm={gb_orm.shape} rays_o={rays_o.shape}")
-                
                 # Compositing
                 w = (1 - alpha) * gb_alpha
                 depth = torch.where(w > max_w, gb_depth, depth)
