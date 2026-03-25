@@ -46,12 +46,31 @@ class EnvMap:
         if not hasattr(self, '_nvdiffrec_envlight'):
             if 'EnvironmentLight' not in globals():
                 from nvdiffrec_render.light import EnvironmentLight
-            cubemap = latlong_to_cubemap(self.image, [512, 512])
-            self._nvdiffrec_envlight = EnvironmentLight(cubemap)
-            self._nvdiffrec_envlight.build_mips()
+            # Force out of inference_mode — build_mips() uses autograd internally
+            # and populates module-level caches that must not be inference tensors
+            with torch.inference_mode(False):
+                cubemap = latlong_to_cubemap(self.image, [512, 512])
+                self._nvdiffrec_envlight = EnvironmentLight(cubemap)
+                self._nvdiffrec_envlight.build_mips()
             # Source HDR image no longer needed — cubemap is used for all rendering
             del self.image
         return self._nvdiffrec_envlight
+
+    def offload(self):
+        """Save cubemap to CPU and tear down the entire EnvironmentLight to free GPU memory."""
+        if hasattr(self, '_nvdiffrec_envlight'):
+            self._cubemap_cpu = self._nvdiffrec_envlight.base.cpu()
+            del self._nvdiffrec_envlight
+
+    def reload(self):
+        """Rebuild EnvironmentLight from saved CPU cubemap."""
+        if hasattr(self, '_cubemap_cpu'):
+            if 'EnvironmentLight' not in globals():
+                from nvdiffrec_render.light import EnvironmentLight
+            with torch.inference_mode(False):
+                self._nvdiffrec_envlight = EnvironmentLight(self._cubemap_cpu.cuda().clone())
+                self._nvdiffrec_envlight.build_mips()
+            del self._cubemap_cpu
 
     def shade(self, gb_pos, gb_normal, kd, ks, view_pos, specular=True):
         return self._backend.shade(gb_pos, gb_normal, kd, ks, view_pos, specular)

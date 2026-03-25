@@ -177,12 +177,20 @@ def _worker_main(cmd_queue, result_queue):
                 print(f"[VRAM] After render: allocated={_vram_mb():.0f}MB")
                 torch.cuda.empty_cache()
                 result_queue.put({"status": "ok", "state": state, "images": images})
+                del mesh, images, state
+                torch.cuda.empty_cache()
             except Exception as e:
                 traceback.print_exc()
                 result_queue.put({"status": "error", "error": str(e)})
+                torch.cuda.empty_cache()
 
         elif action == "extract_glb":
             try:
+                # Offload envmaps to CPU — not used during GLB export
+                for env in envmap.values():
+                    env.offload()
+                torch.cuda.empty_cache()
+                
                 state = cmd["state"]
                 shape_slat = SparseTensor(
                     feats=torch.from_numpy(state['shape_slat_feats']).cuda(),
@@ -216,10 +224,23 @@ def _worker_main(cmd_queue, result_queue):
                     use_tqdm=True,
                 )
                 glb.export(cmd["glb_path"], extension_webp=True)
+                del mesh
                 torch.cuda.empty_cache()
+                
+                # Reload envmaps back to GPU for next render cycle
+                for env in envmap.values():
+                    env.reload()
+                
                 result_queue.put({"status": "ok", "glb_path": cmd["glb_path"]})
             except Exception as e:
                 traceback.print_exc()
+                # Reload envmaps even on failure, so next generate's render works
+                for env in envmap.values():
+                    try:
+                        env.reload()
+                    except Exception:
+                        pass
+                torch.cuda.empty_cache()
                 result_queue.put({"status": "error", "error": str(e)})
 
 

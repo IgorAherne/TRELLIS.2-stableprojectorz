@@ -94,6 +94,12 @@ def to_glb(
     assert isinstance(grid_size, torch.Tensor)
     assert grid_size.dim() == 1 and grid_size.size(0) == 3
     
+    # CPU-offload attr_volume and coords — only needed at the final texture-baking step
+    attr_volume_cpu = attr_volume.cpu()
+    coords_cpu = coords.cpu()
+    del attr_volume, coords
+    torch.cuda.empty_cache()
+    
     if use_tqdm:
         pbar = tqdm(total=6, desc="Extracting GLB")
     if verbose:
@@ -132,6 +138,12 @@ def to_glb(
     if verbose:
         print("Cleaning mesh...")
     
+    # DIAGNOSTIC: What's on GPU right now?
+    print(f"[DIAG] vertices: {vertices.shape}, faces: {faces.shape}, device={vertices.device}")
+    print(f"[DIAG] VRAM allocated: {torch.cuda.memory_allocated()/(1024**2):.0f}MB, reserved: {torch.cuda.memory_reserved()/(1024**2):.0f}MB")
+    import time
+    time.sleep(10) #MODIF
+    
     # --- Branch 1: Standard Pipeline (Simplification & Cleaning) ---
     if not remesh:
         # Step 1: Aggressive simplification (3x target)
@@ -169,8 +181,13 @@ def to_glb(
         scale = (aabb[1] - aabb[0]).max().item()
         resolution = grid_size.max().item()
         
+        # Free CuMesh internal buffers before the heavy remesh allocation —
+        # vertices/faces are still held separately for BVH texture baking later
+        del mesh
+        torch.cuda.empty_cache()
+        
         # Perform Dual Contouring remeshing (rebuilds topology)
-        mesh.init(*cumesh.remeshing.remesh_narrow_band_dc(
+        remesh_verts, remesh_faces = cumesh.remeshing.remesh_narrow_band_dc(
             vertices, faces,
             center = center,
             scale = (resolution + 3 * remesh_band) / resolution * scale,
@@ -179,7 +196,11 @@ def to_glb(
             project_back = remesh_project, # Snaps vertices back to original surface
             verbose = verbose,
             bvh = bvh,
-        ))
+        )
+        mesh = cumesh.CuMesh()
+        mesh.init(remesh_verts, remesh_faces)
+        del remesh_verts, remesh_faces
+
         if verbose:
             print(f"After remeshing: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
         
@@ -257,6 +278,15 @@ def to_glb(
     orig_tri_verts = vertices[faces[face_id.long()]] # (N_new, 3, 3)
     valid_pos = (orig_tri_verts * uvw.unsqueeze(-1)).sum(dim=1)
     
+    # Free original high-res mesh data and BVH — no longer needed
+    del vertices, faces, bvh, orig_tri_verts, face_id, uvw
+    torch.cuda.empty_cache()
+    
+    # Reload attr_volume and coords from CPU for texture sampling
+    attr_volume = attr_volume_cpu.cuda()
+    coords = coords_cpu.cuda()
+    del attr_volume_cpu, coords_cpu
+    
     # Trilinear sampling from the attribute volume (Color, Material props)
     attrs = torch.zeros(texture_size, texture_size, attr_volume.shape[1], device='cuda')
     attrs[mask] = grid_sample_3d(
@@ -266,6 +296,11 @@ def to_glb(
         grid=((valid_pos - aabb[0]) / voxel_size).reshape(1, -1, 3),
         mode='trilinear',
     )
+    
+    # Free attr_volume and coords now that texture baking is done
+    del attr_volume, coords
+    torch.cuda.empty_cache()
+
     if use_tqdm:
         pbar.update(1)
     if verbose:
