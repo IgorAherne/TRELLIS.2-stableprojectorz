@@ -188,6 +188,45 @@ def download_models():
         print(f"  {model['name']} ready.")
 
 
+def download_hf_models():
+    """Pre-download HuggingFace model weights so the app doesn't timeout on first launch."""
+
+    print("\n============================================================================= ")
+    print(" Downloading TRELLIS.2 model weights from HuggingFace.")
+    print(" This may take 10-30 minutes on first install (~20GB total). Please wait")
+    print(  "============================================================================= ")
+    
+    # Import here because huggingface_hub is installed in the previous step
+    from huggingface_hub import snapshot_download
+    
+    CODE_DIR = get_current_script_dir()
+    cache_dir = str(CODE_DIR / "models" / "hub")
+    
+    repos = [
+        "microsoft/TRELLIS.2-4B",
+        "microsoft/TRELLIS-image-large",
+    ]
+    
+    for repo_id in repos:
+        print(f"  Downloading {repo_id}...")
+        for attempt in range(MAX_RETRIES):
+            try:
+                snapshot_download(
+                    repo_id,
+                    cache_dir=cache_dir,
+                    resume_download=True,
+                )
+                print(f"  {repo_id} ready.")
+                break
+            except Exception as e:
+                print(f"  Download failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    print(f"  Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise InstallationError(f"Failed to download {repo_id} after {MAX_RETRIES} attempts")
+
+
 def install_dependencies():
     """Install Trellis 2 dependencies."""
     CODE_DIR = get_current_script_dir()
@@ -211,11 +250,14 @@ def install_dependencies():
         print("\n--- Installing General Dependencies ---")
         general_deps = [
             "imageio", "imageio-ffmpeg", "tqdm", "easydict", "opencv-python-headless",
-            "ninja", "trimesh", "transformers", "gradio==6.0.1", "tensorboard",
+            "ninja", "trimesh", "transformers==4.57.3", "gradio==6.0.1", "tensorboard",
             "pandas", "lpips", "zstandard", "kornia", "timm", 
-            "huggingface_hub", "accelerate", "psutil", "triton-windows"
+            "huggingface_hub", "accelerate", "psutil", "triton-windows==3.4.0.post21"
         ]
         run_command_with_retry(f"pip install {' '.join(general_deps)}", "Installing pip packages")
+
+        # 2.5. Pre-download HuggingFace model weights
+        download_hf_models()
 
         # 3. Handle Pillow Replacement (Standard -> SIMD)
         print("\n--- Configuring Pillow ---")
