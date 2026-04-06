@@ -55,7 +55,10 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
             (Kw, Kh, Kd),
             self.dilation
         )
-        x.register_spatial_cache(neighbor_cache_key, neighbor_cache)
+        # Only cache small neighbor maps — large ones (>256MB) are freed after each conv
+        neighbor_map_bytes = neighbor_cache['neighbor_map'].numel() * neighbor_cache['neighbor_map'].element_size()
+        if neighbor_map_bytes < 256 * 1024 * 1024:
+            x.register_spatial_cache(neighbor_cache_key, neighbor_cache)
 
     # Chunked im2col + GEMM to cap peak VRAM
     feats = x.feats
@@ -63,7 +66,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     neighbor_map = neighbor_cache['neighbor_map']
     weight_mat = self.weight.reshape(Co, V * Ci).t()  # [V*Ci, Co]
 
-    # Keep each chunk's im2col buffer under ~768MB
+    # Keep each chunk's im2col buffer under ~128MB for low-VRAM GPUs
     im2col_bytes_per_voxel = V * Ci * feats.element_size()
     CHUNK = max(1024, (128 * 1024 * 1024) // im2col_bytes_per_voxel)
 
@@ -73,9 +76,9 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
         chunk_map = neighbor_map[start:end]             # [chunk_n, V]
         chunk_n = end - start
         chunk_im2col = torch.zeros((chunk_n * V, Ci), device=feats.device, dtype=feats.dtype)
-        flat_map = chunk_map.reshape(-1).long()
-        mask = flat_map != 0xffffffff
-        chunk_im2col[mask] = feats[flat_map[mask]]
+        flat_map = chunk_map.reshape(-1).int()
+        mask = flat_map != -1
+        chunk_im2col[mask] = feats[flat_map[mask].long()]
         chunk_im2col = chunk_im2col.view(chunk_n, V * Ci)
         if self.bias is not None:
             output[start:end] = torch.addmm(self.bias, chunk_im2col, weight_mat)

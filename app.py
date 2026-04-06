@@ -1,6 +1,7 @@
 # File: app.py
 # app.py
 import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 
 import gradio as gr

@@ -418,15 +418,45 @@ class Trellis2ImageTo3DPipeline(Pipeline):
 
         Args:
             slat (SparseTensor): The structured latent.
-            formats (List[str]): The formats to decode the structured latent to.
 
         Returns:
             List[Mesh]: The decoded meshes.
             List[SparseTensor]: The decoded substructures.
         """
-        self.models['shape_slat_decoder'].set_resolution(resolution)
-        ret = self.models['shape_slat_decoder'](slat, return_subs=True)
-        return ret
+        from trellis2.models.sc_vaes.sparse_unet_vae import SparseUnetVaeDecoder
+        from o_voxel.convert import flexible_dual_grid_to_mesh
+        from trellis2.representations import Mesh
+        import torch.nn.functional as F
+
+        decoder = self.models['shape_slat_decoder']
+        decoder.set_resolution(resolution)
+
+        # Step 1: Run decoder backbone only (parent class forward)
+        decoded = SparseUnetVaeDecoder.forward(decoder, slat, return_subs=True)
+        h, subs = decoded
+
+        # Step 2: Free decoder weights before mesh extraction
+        if self.low_vram:
+            decoder.cpu()
+        torch.cuda.empty_cache()
+
+        # Step 3: Extract mesh from decoded features
+        voxel_margin = decoder.voxel_margin
+        vertices = h.replace((1 + 2 * voxel_margin) * torch.sigmoid(h.feats[..., 0:3]) - voxel_margin)
+        intersected = h.replace(h.feats[..., 3:6] > 0)
+        quad_lerp = h.replace(F.softplus(h.feats[..., 6:7]))
+        mesh = [Mesh(*flexible_dual_grid_to_mesh(
+            h.coords[:, 1:], v.feats, i.feats, q.feats,
+            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+            grid_size=resolution,
+            train=False
+        )) for v, i, q in zip(vertices, intersected, quad_lerp)]
+
+        del h, vertices, intersected, quad_lerp
+        torch.cuda.empty_cache()
+
+        return mesh, subs
+
     
     def sample_tex_slat(
         self,
@@ -506,13 +536,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             shape_dec.dtype = torch.float16
         if self.low_vram:
             shape_dec.to(self.device)
-        
-        torch.cuda.reset_peak_memory_stats()
+
         meshes, subs = self.decode_shape_slat(shape_slat, resolution)
-        print(f"[VRAM] shape decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB, reserved={torch.cuda.memory_reserved()/(1024**2):.0f}MB")
-        free, total = torch.cuda.mem_get_info()
-        print(f"[VRAM] driver used={(total-free)/(1024**2):.0f}MB")
-        
+
         del shape_slat
         if self.low_vram:
             shape_dec.cpu()
@@ -520,6 +546,11 @@ class Trellis2ImageTo3DPipeline(Pipeline):
 
         # Offload subs to CPU between decoder phases
         subs = [s.to('cpu') for s in subs]
+        torch.cuda.empty_cache()
+        # Offload meshes to CPU — not needed until final assembly
+        for m in meshes:
+            m.vertices = m.vertices.cpu()
+            m.faces = m.faces.cpu()
         torch.cuda.empty_cache()
 
         # 2. Load texture decoder, run, and clear
@@ -529,16 +560,12 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tex_dec.dtype = torch.float16
         if self.low_vram:
             tex_dec.to(self.device)
-        
+
         # Wrap subs for lazy one-at-a-time GPU loading
         subs = _LazyCudaSubs(subs, self.device)
 
-        torch.cuda.reset_peak_memory_stats()
         tex_voxels = self.decode_tex_slat(tex_slat, subs)
-        print(f"[VRAM] tex decode PEAK={torch.cuda.max_memory_allocated()/(1024**2):.0f}MB")
-        free, total = torch.cuda.mem_get_info()
-        print(f"[VRAM] driver used={(total-free)/(1024**2):.0f}MB")
-        
+
         del tex_slat
         del subs
         if self.low_vram:
@@ -548,6 +575,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         # 3. Assemble meshes
         out_mesh = []
         for m, v in zip(meshes, tex_voxels):
+            m.vertices = m.vertices.cuda()
+            m.faces = m.faces.cuda()
             m.fill_holes()
             out_mesh.append(
                 MeshWithVoxel(
