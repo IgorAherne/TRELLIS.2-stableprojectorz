@@ -234,7 +234,7 @@ def to_glb(
     v1 = verts_tmp[faces_tmp[:, 1]]
     v2 = verts_tmp[faces_tmp[:, 2]]
     face_areas = torch.cross(v1 - v0, v2 - v0, dim=1).norm(dim=1)
-    degenerate = face_areas < 1e-10
+    degenerate = face_areas < 1e-6
     if degenerate.any():
         good_faces = faces_tmp[~degenerate]
         mesh = cumesh.CuMesh()

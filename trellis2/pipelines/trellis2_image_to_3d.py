@@ -11,6 +11,9 @@ from ..modules.sparse import SparseTensor
 from ..modules import image_feature_extractor
 from ..representations import Mesh, MeshWithVoxel
 
+from trellis2.modules.sparse.conv import conv_flex_gemm
+        
+
 
 class _LazyCudaSubs:
     """Keeps subs on CPU; moves each to GPU on access, frees the previous one."""
@@ -519,6 +522,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         ret = self.models['tex_slat_decoder'](slat, guide_subs=subs) * 0.5 + 0.5
         return ret
     
+
     @torch.inference_mode()
     def decode_latent(
         self,
@@ -529,6 +533,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         """
         Decode the latent codes.
         """
+        from trellis2.modules.sparse.conv import conv_flex_gemm
+        conv_flex_gemm.LOW_VRAM_CONV = True
+
         # 1. Load shape decoder, run, and clear
         shape_dec = self.models['shape_slat_decoder']
         if shape_dec.dtype != torch.float16:
@@ -572,6 +579,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             tex_dec.cpu()
         torch.cuda.empty_cache()
 
+        conv_flex_gemm.LOW_VRAM_CONV = False
+
         # 3. Assemble meshes
         out_mesh = []
         for m, v in zip(meshes, tex_voxels):
@@ -590,6 +599,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
                 )
             )
         return out_mesh
+
     
     @torch.no_grad()
     def run(

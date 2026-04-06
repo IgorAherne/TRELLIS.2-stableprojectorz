@@ -536,9 +536,7 @@ class SparseUnetVaeDecoder(nn.Module):
         
         h = self.from_latent(x)
         h = h.type(self.dtype)
-        if not self.training:
-            x.feats = torch.empty(0, dtype=h.dtype, device='cpu')
-            torch.cuda.empty_cache()
+        
         subs_gt = []
         subs = []
         for i, res in enumerate(self.blocks):
@@ -571,16 +569,13 @@ class SparseUnetVaeDecoder(nn.Module):
     def upsample(self, x: sp.SparseTensor, upsample_times: int) -> torch.Tensor:
         assert self.pred_subdiv == True, "Only decoders with pred_subdiv=True can be used with upsampling"
         
-        device = x.device
         h = self.from_latent(x)
         h = h.type(self.dtype)
-        x.feats = torch.empty(0, dtype=h.dtype, device='cpu')
-        torch.cuda.empty_cache()
         for i, res in enumerate(self.blocks):
             if i == upsample_times:
                 return h.coords
             if self.low_vram:
-                res.to(device)
+                res.to(x.device)
             for j, block in enumerate(res):
                 if i < len(self.blocks) - 1 and j == len(res) - 1:
                     h, sub = block(h)

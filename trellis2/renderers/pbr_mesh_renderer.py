@@ -65,6 +65,8 @@ class EnvMap:
     def reload(self):
         """Rebuild EnvironmentLight from saved CPU cubemap."""
         if hasattr(self, '_cubemap_cpu'):
+            # Catch any async CUDA errors from prior mesh processing
+            torch.cuda.synchronize()
             if 'EnvironmentLight' not in globals():
                 from nvdiffrec_render.light import EnvironmentLight
             with torch.inference_mode(False):
