@@ -17,6 +17,7 @@ from PIL import Image
 
 import base64
 import io
+import atexit, signal
 
 from pipeline_worker import PipelineWorker
 from trellis2.modules.sparse import SparseTensor
@@ -586,7 +587,7 @@ def create_preview_panel():
         with gr.Walkthrough(selected=0) as walkthrough:
             with gr.Step("Preview", id=0):
                 preview_output = gr.HTML(empty_html, label="3D Asset Preview", show_label=True, container=True)
-                extract_btn = gr.Button("Extract GLB")
+                extract_btn = gr.Button("Extract GLB", interactive=False)
             with gr.Step("Extract", id=1):
                 glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
                 download_btn = gr.DownloadButton(label="Download GLB")
@@ -651,6 +652,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
     ).then(
         lambda: gr.Walkthrough(selected=0), outputs=outputs["walkthrough"]
     ).then(
+        lambda: gr.Button(interactive=False), outputs=outputs["extract_btn"],
+    ).then(
         image_to_3d,
         inputs=[
             inputs["image_prompt"], inputs["seed"], inputs["resolution"],
@@ -661,6 +664,8 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
             inputs["profiler_delay_sec"], inputs["profiler_max_duration_sec"], inputs["profiler_max_events"],
         ],
         outputs=[output_buf, outputs["preview_output"]],
+    ).then(
+        lambda: gr.Button(interactive=True), outputs=outputs["extract_btn"],
     )
     
     outputs["extract_btn"].click(
@@ -674,6 +679,12 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
 
 # Launch the Gradio app
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8080)
+    args, unknown = parser.parse_known_args()
+
     os.makedirs(TMP_DIR, exist_ok=True)
 
     # Construct ui components
@@ -683,5 +694,35 @@ if __name__ == "__main__":
         MODES[i]['icon_base64'] = image_to_base64(icon)
 
     worker = PipelineWorker()
+
+    def _cleanup():
+        worker.shutdown()
+
+    atexit.register(_cleanup)
+    signal.signal(signal.SIGINT, lambda *_: (atexit._run_exitfuncs(), exit(0)))
+    signal.signal(signal.SIGTERM, lambda *_: (atexit._run_exitfuncs(), exit(0)))
     
-    demo.launch(css=css, head=head)
+    import socket
+    def _find_free_port(start=args.port, attempts=100):
+        for p in range(start, start + attempts):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex((args.host, p)) == 0:
+                    continue
+                if p!=args.port: 
+                    print(f"\nBinding to port {p} because requested port {args.port} is already used by something else.")
+                return p
+        raise RuntimeError(f"No free port found in range {start}-{start+attempts}")
+
+    port = _find_free_port(args.port)
+
+
+    app, local_url, share_url = demo.launch(
+        css=css, 
+        head=head, 
+        server_name=args.host, server_port=port,
+        prevent_thread_lock=True)
+    print("\n==============================================")
+    print(f"Keep gpu-hungry 3D programs disabled during generation (avoid photoshop/blender/unity).")
+    print(f"\nTo start work, open browser and enter  http://{args.host}:{port}  in the URL bar, like it's a website.")
+    print("==============================================")
+    demo.block_thread()

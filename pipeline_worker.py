@@ -6,6 +6,28 @@ import os
 import sys
 
 
+# from tools.profiling_wrapper import AuraProfiler
+# from tools.sync_hunter import hunt_syncs
+
+# ── Profiler / sync-hunter stubs (not shipped) ──────────────
+class AuraProfiler:
+    def __init__(self, **kwargs):
+        pass
+    def start(self):
+        pass
+    def step(self):
+        pass
+    def stop_and_save(self, name):
+        pass
+
+from contextlib import contextmanager
+
+@contextmanager
+def hunt_syncs(**kwargs):
+    yield
+# ─────────────────────────────────────────────────────────────
+
+
 def _apply_patches():
     """Apply Windows compatibility patches for flex_gemm."""
     import torch
@@ -75,7 +97,7 @@ def _worker_main(cmd_queue, result_queue):
     from trellis2.modules.sparse import SparseTensor
     import o_voxel
 
-    print("[WORKER] Loading pipeline...")
+    print("[WORKER] Loading pipeline, please wait...")
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
     pipeline.cuda()
 
@@ -115,8 +137,6 @@ def _worker_main(cmd_queue, result_queue):
 
         elif action == "generate":
             try:
-                from tools.profiling_wrapper import AuraProfiler
-                from tools.sync_hunter import hunt_syncs
                 prof_cfg = cmd["profiling"]
                 prof_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp', 'profiling')
                 master_enabled = prof_cfg["enable_python"] or prof_cfg["enable_torch"]

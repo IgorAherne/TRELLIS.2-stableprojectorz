@@ -371,7 +371,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             ], dim=1)
             coords = quant_coords.unique(dim=0)
             num_tokens = coords.shape[0]
-            if num_tokens < max_num_tokens or hr_resolution <= 512:
+            if num_tokens < max_num_tokens or hr_resolution <= 1024:
                 if hr_resolution != resolution:
                     print(f"Due to the limited number of tokens, the resolution is reduced to {hr_resolution}.")
                 break

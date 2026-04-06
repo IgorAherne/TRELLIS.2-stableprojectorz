@@ -20,6 +20,7 @@ def __from_env():
         DEBUG = env_attn_debug == '1'
 
     print(f"[ATTENTION] Using backend: {BACKEND}")
+    print("Please wait...")
         
 
 __from_env()
