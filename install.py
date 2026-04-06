@@ -122,6 +122,72 @@ def run_command_with_retry(cmd: str, desc: Optional[str] = None, max_retries: in
         print(f"Warning: Command '{desc}' failed. Continuing...")
         return last_error
 
+
+def download_models():
+    """Download and extract model zips from GitHub releases if not already present."""
+    CODE_DIR = get_current_script_dir()
+    models_dir = CODE_DIR / "MODELS"
+    models_dir.mkdir(exist_ok=True)
+
+    MODELS = [
+        {
+            "name": "dinov3",
+            "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+            "check_file": models_dir / "dinov3" / "model.safetensors",
+        },
+        {
+            "name": "RMBG-2.0",
+            "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+            "check_file": models_dir / "RMBG-2.0" / "model.safetensors",
+        },
+    ]
+
+    for model in MODELS:
+        if model["check_file"].exists():
+            print(f"[INFO] {model['name']} already present, skipping download.")
+            continue
+
+        zip_path = models_dir / f"{model['name']}.zip"
+        print(f"\nDownloading {model['name']} from {model['url']}")
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                if attempt > 0:
+                    print(f"Retry attempt {attempt + 1}/{MAX_RETRIES}...")
+                    time.sleep(RETRY_DELAY)
+
+                def _reporthook(block_num, block_size, total_size):
+                    downloaded = block_num * block_size
+                    if total_size > 0:
+                        pct = min(downloaded * 100 / total_size, 100)
+                        mb_down = downloaded / (1024 * 1024)
+                        mb_total = total_size / (1024 * 1024)
+                        print(f"\r  {mb_down:.1f}/{mb_total:.1f} MB ({pct:.0f}%)", end="", flush=True)
+
+                urllib.request.urlretrieve(model["url"], str(zip_path), reporthook=_reporthook)
+                print()  # newline after progress
+                break
+            except Exception as e:
+                print(f"\nDownload failed: {e}")
+                if zip_path.exists():
+                    zip_path.unlink()
+                if attempt == MAX_RETRIES - 1:
+                    raise InstallationError(f"Failed to download {model['name']} after {MAX_RETRIES} attempts")
+        # Extract
+        print(f"  Extracting {model['name']}...")
+        import zipfile
+        with zipfile.ZipFile(str(zip_path), 'r') as zf:
+            zf.extractall(str(models_dir))
+        zip_path.unlink()
+
+        if not model["check_file"].exists():
+            raise InstallationError(
+                f"Extraction succeeded but {model['check_file'].name} not found. "
+                f"Check that the zip contains a '{model['name']}/' folder at its root."
+            )
+        print(f"  {model['name']} ready.")
+
+
 def install_dependencies():
     """Install Trellis 2 dependencies."""
     CODE_DIR = get_current_script_dir()
@@ -133,6 +199,9 @@ def install_dependencies():
             print(f"Error: Internet connectivity check failed: {error_msg}")
             sys.exit(1)
         
+        # 0. Download model weights (dinov3, RMBG-2.0) if not already present
+        download_models()
+
         # 1. PyTorch 2.8.0 + CUDA 12.8
         print("\n--- Installing PyTorch 2.8.0 (CUDA 12.8) ---")
         torch_cmd = "pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128"
@@ -144,7 +213,7 @@ def install_dependencies():
             "imageio", "imageio-ffmpeg", "tqdm", "easydict", "opencv-python-headless",
             "ninja", "trimesh", "transformers", "gradio==6.0.1", "tensorboard",
             "pandas", "lpips", "zstandard", "kornia", "timm", 
-            "huggingface_hub", "accelerate", "psutil"
+            "huggingface_hub", "accelerate", "psutil", "triton-windows"
         ]
         run_command_with_retry(f"pip install {' '.join(general_deps)}", "Installing pip packages")
 

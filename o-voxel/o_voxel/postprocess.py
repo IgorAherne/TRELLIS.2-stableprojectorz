@@ -94,7 +94,7 @@ def to_glb(
     assert isinstance(grid_size, torch.Tensor)
     assert grid_size.dim() == 1 and grid_size.size(0) == 3
     
-    # CPU-offload attr_volume and coords — only needed at the final texture-baking step
+    # CPU-offload attr_volume and coords â€” only needed at the final texture-baking step
     attr_volume_cpu = attr_volume.cpu()
     coords_cpu = coords.cpu()
     del attr_volume, coords
@@ -179,7 +179,7 @@ def to_glb(
         scale = (aabb[1] - aabb[0]).max().item()
         resolution = grid_size.max().item()
         
-        # Free CuMesh internal buffers before the heavy remesh allocation —
+        # Free CuMesh internal buffers before the heavy remesh allocation â€”
         # vertices/faces are still held separately for BVH texture baking later
         del mesh
         torch.cuda.empty_cache()
@@ -207,7 +207,7 @@ def to_glb(
         if verbose:
             print(f"After simplifying: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
         
-        # Clean up topology — remove stray triangles, hairs, and non-manifold edges
+        # Clean up topology â€” remove stray triangles, hairs, and non-manifold edges
         mesh.remove_duplicate_faces()
         mesh.repair_non_manifold_edges()
         mesh.remove_small_connected_components(1e-5)
@@ -234,7 +234,7 @@ def to_glb(
     v1 = verts_tmp[faces_tmp[:, 1]]
     v2 = verts_tmp[faces_tmp[:, 2]]
     face_areas = torch.cross(v1 - v0, v2 - v0, dim=1).norm(dim=1)
-    degenerate = face_areas < 1e-6
+    degenerate = face_areas < 1e-10
     if degenerate.any():
         good_faces = faces_tmp[~degenerate]
         mesh = cumesh.CuMesh()
@@ -300,7 +300,7 @@ def to_glb(
     orig_tri_verts = vertices[faces[face_id.long()]] # (N_new, 3, 3)
     valid_pos = (orig_tri_verts * uvw.unsqueeze(-1)).sum(dim=1)
     
-    # Free original high-res mesh data and BVH — no longer needed
+    # Free original high-res mesh data and BVH â€” no longer needed
     del vertices, faces, bvh, orig_tri_verts, face_id, uvw
     torch.cuda.empty_cache()
     

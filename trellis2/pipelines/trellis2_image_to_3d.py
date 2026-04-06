@@ -534,7 +534,6 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         Decode the latent codes.
         """
         from trellis2.modules.sparse.conv import conv_flex_gemm
-        conv_flex_gemm.LOW_VRAM_CONV = True
 
         # 1. Load shape decoder, run, and clear
         shape_dec = self.models['shape_slat_decoder']
@@ -578,8 +577,6 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if self.low_vram:
             tex_dec.cpu()
         torch.cuda.empty_cache()
-
-        conv_flex_gemm.LOW_VRAM_CONV = False
 
         # 3. Assemble meshes
         out_mesh = []
