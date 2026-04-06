@@ -14,11 +14,10 @@ Optimized the code to fit better into 8GB gpus, even with 1024 voxels.
 6) launch via `python app.py`
 
 
-
 <br>
 <h2>Original Trellis Repo description:</h2>
 
-<br><br>
+<br>
 
 ![](assets/teaser.webp)
 
