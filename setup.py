@@ -43,7 +43,7 @@ extras_require = {
     'nvdiffrast': ['nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@v0.4.0'],
 
     # Corresponds to --nvdiffrec
-    'nvdiffrec': ['nvdiffrec @ git+https://github.com/JeffreyXiang/nvdiffrec.git@renderutils'],
+    'nvdiffrec': ['nvdiffrec @ git+https://github.com/IgorAherne/nvdiffrec.git@renderutils'], #Igor fixed garbage-init structs in cpp file.
 
     # Corresponds to --cumesh
     'cumesh': ['CuMesh @ git+https://github.com/JeffreyXiang/CuMesh.git'],

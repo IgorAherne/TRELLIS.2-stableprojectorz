@@ -71,7 +71,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
 
     # Keep each chunk's im2col buffer under ~32MB for low-VRAM GPUs if flag is active (will be active only during some stages)
     im2col_bytes_per_voxel = V * Ci * feats.element_size()
-    _cap = (32 * 1024 * 1024) if LOW_VRAM_CONV else (256 * 1024 * 1024)
+    _cap = (32 * 1024 * 1024) if LOW_VRAM_CONV else (512 * 1024 * 1024)
     CHUNK = max(1024, _cap // im2col_bytes_per_voxel)
 
     output = torch.empty((N, Co), device=feats.device, dtype=feats.dtype)
