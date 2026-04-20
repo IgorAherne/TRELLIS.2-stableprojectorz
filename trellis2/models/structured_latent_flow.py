@@ -1,3 +1,4 @@
+# File: trellis2/models/structured_latent_flow.py
 # trellis2/models/structured_latent_flow.py
 from typing import *
 from functools import partial

@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/spatial/spatial2channel.py
 # trellis2/modules/sparse/spatial/spatial2channel.py
 from typing import *
 import torch

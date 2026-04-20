@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/spatial/basic.py
 # trellis2/modules/sparse/spatial/basic.py
 from typing import *
 import torch

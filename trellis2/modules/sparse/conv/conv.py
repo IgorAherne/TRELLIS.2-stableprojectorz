@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/conv/conv.py
 # trellis2/modules/sparse/conv/conv.py
 from .. import config
 import importlib

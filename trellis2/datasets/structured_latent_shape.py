@@ -1,3 +1,4 @@
+# File: trellis2/datasets/structured_latent_shape.py
 # trellis2/datasets/structured_latent_shape.py
 import os
 import json

@@ -1,3 +1,4 @@
+# File: trellis2/models/sc_vaes/fdg_vae.py
 # trellis2/models/sc_vaes/fdg_vae.py
 from typing import *
 import torch

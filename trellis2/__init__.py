@@ -1,3 +1,4 @@
+# File: trellis2/__init__.py
 # trellis2/__init__.py
 from . import models
 from . import modules

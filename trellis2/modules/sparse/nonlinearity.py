@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/nonlinearity.py
 # trellis2/modules/sparse/nonlinearity.py
 import torch
 import torch.nn as nn

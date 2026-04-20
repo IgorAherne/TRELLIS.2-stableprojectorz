@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/config.py
 # trellis2/modules/sparse/config.py
 from typing import *
 

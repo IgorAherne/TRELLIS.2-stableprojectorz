@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/transformer/modulated.py
 # trellis2/modules/sparse/transformer/modulated.py
 from typing import *
 import torch

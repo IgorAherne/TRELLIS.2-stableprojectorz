@@ -1,3 +1,4 @@
+# File: trellis2/trainers/flow_matching/mixins/text_conditioned.py
 # trellis2/trainers/flow_matching/mixins/text_conditioned.py
 from typing import *
 import os

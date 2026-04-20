@@ -1,3 +1,4 @@
+# File: trellis2/trainers/utils.py
 # trellis2/trainers/utils.py
 import torch
 import torch.nn as nn

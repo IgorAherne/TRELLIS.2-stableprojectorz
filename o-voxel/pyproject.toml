@@ -2,7 +2,7 @@
 requires = [
     "setuptools>=64",
     "wheel",
-    "torch",
+    # "torch", # commented out to avoid overwriting our own pytorch in venv.
     "numpy",
     "plyfile",
     "trimesh",
@@ -22,13 +22,13 @@ authors = [
     { name = "Jianfeng Xiang", email = "belljig@outlook.com" }
 ]
 dependencies = [
-    "torch",
+    # "torch",  # commented out to avoid overwriting our own pytorch in venv.
     "numpy",
     "plyfile",
     "trimesh",
     "tqdm",
     "zstandard",
     "easydict",
-    "cumesh @ git+https://github.com/JeffreyXiang/CuMesh.git",
-    "flex_gemm @ git+https://github.com/JeffreyXiang/FlexGEMM.git",
+    # "cumesh @ git+https://github.com/JeffreyXiang/CuMesh.git", # instead we will use the wheel from /whl
+    # "flex_gemm @ git+https://github.com/JeffreyXiang/FlexGEMM.git", # instead we will use the wheel from /whl
 ]

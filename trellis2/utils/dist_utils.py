@@ -1,3 +1,4 @@
+# File: trellis2/utils/dist_utils.py
 # trellis2/utils/dist_utils.py
 import os
 import io

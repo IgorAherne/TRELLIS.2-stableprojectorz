@@ -1,3 +1,4 @@
+# File: trellis2/models/sparse_elastic_mixin.py
 # trellis2/models/sparse_elastic_mixin.py
 from contextlib import contextmanager
 from typing import *

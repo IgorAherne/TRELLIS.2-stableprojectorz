@@ -1,3 +1,4 @@
+# File: trellis2/pipelines/samplers/base.py
 # trellis2/pipelines/samplers/base.py
 from typing import *
 from abc import ABC, abstractmethod

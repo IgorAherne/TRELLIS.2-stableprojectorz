@@ -1,3 +1,4 @@
+# File: trellis2/representations/mesh/base.py
 # trellis2/representations/mesh/base.py
 from typing import *
 import torch

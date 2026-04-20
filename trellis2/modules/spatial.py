@@ -1,3 +1,4 @@
+# File: trellis2/modules/spatial.py
 # trellis2/modules/spatial.py
 import torch
 

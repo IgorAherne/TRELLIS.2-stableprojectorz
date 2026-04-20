@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/attention/modules.py
 # trellis2/modules/sparse/attention/modules.py
 from typing import *
 import torch

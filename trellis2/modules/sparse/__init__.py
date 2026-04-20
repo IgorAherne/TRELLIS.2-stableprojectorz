@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/__init__.py
 # trellis2/modules/sparse/__init__.py
 from . import config
 import importlib

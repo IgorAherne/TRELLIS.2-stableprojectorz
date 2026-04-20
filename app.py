@@ -1,24 +1,27 @@
+# File: app.py
 # app.py
+import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
+
 import gradio as gr
 
-import os
-os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from datetime import datetime
 import shutil
-import cv2
 from typing import *
-import torch
 import numpy as np
 from PIL import Image
+
 import base64
 import io
-from trellis2.modules.sparse import SparseTensor
-from trellis2.pipelines import Trellis2ImageTo3DPipeline
-from trellis2.renderers import EnvMap
-from trellis2.utils import render_utils
-import o_voxel
+import atexit, signal
 
+from pipeline_worker import PipelineWorker
+from trellis2.modules.sparse import SparseTensor
+import torch
 
 MAX_SEED = np.iinfo(np.int32).max
 TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
@@ -310,17 +313,7 @@ def end_session(req: gr.Request):
 
 
 def preprocess_image(image: Image.Image) -> Image.Image:
-    """
-    Preprocess the input image.
-
-    Args:
-        image (Image.Image): The input image.
-
-    Returns:
-        Image.Image: The preprocessed image.
-    """
-    processed_image = pipeline.preprocess_image(image)
-    return processed_image
+    return worker.preprocess(image)
 
 
 def pack_state(latents: Tuple[SparseTensor, SparseTensor, int]) -> dict:
@@ -365,45 +358,55 @@ def image_to_3d(
     tex_slat_guidance_rescale: float,
     tex_slat_sampling_steps: int,
     tex_slat_rescale_t: float,
+    enable_python_profiling: bool,
+    enable_torch_profiling: bool,
+    enable_sync_hunter: bool,
+    profiler_delay_sec: float,
+    profiler_max_duration_sec: float,
+    profiler_max_events: int,
     req: gr.Request,
-    progress=gr.Progress(track_tqdm=True),
 ) -> str:
-    # --- Sampling ---
-    outputs, latents = pipeline.run(
-        image,
-        seed=seed,
-        preprocess_image=False,
-        sparse_structure_sampler_params={
-            "steps": ss_sampling_steps,
-            "guidance_strength": ss_guidance_strength,
-            "guidance_rescale": ss_guidance_rescale,
-            "rescale_t": ss_rescale_t,
-        },
-        shape_slat_sampler_params={
-            "steps": shape_slat_sampling_steps,
-            "guidance_strength": shape_slat_guidance_strength,
-            "guidance_rescale": shape_slat_guidance_rescale,
-            "rescale_t": shape_slat_rescale_t,
-        },
-        tex_slat_sampler_params={
-            "steps": tex_slat_sampling_steps,
-            "guidance_strength": tex_slat_guidance_strength,
-            "guidance_rescale": tex_slat_guidance_rescale,
-            "rescale_t": tex_slat_rescale_t,
-        },
-        pipeline_type={
-            "512": "512",
-            "1024": "1024_cascade",
-            "1536": "1536_cascade",
-        }[resolution],
-        return_latent=True,
-    )
-    mesh = outputs[0]
-    mesh.simplify(16777216) # nvdiffrast limit
-    images = render_utils.render_snapshot(mesh, resolution=1024, r=2, fov=36, nviews=STEPS, envmap=envmap)
-    state = pack_state(latents)
-    torch.cuda.empty_cache()
-    
+    try:
+        state, images = worker.generate(
+            image=image,
+            seed=seed,
+            ss_params={
+                "steps": ss_sampling_steps,
+                "guidance_strength": ss_guidance_strength,
+                "guidance_rescale": ss_guidance_rescale,
+                "rescale_t": ss_rescale_t,
+            },
+            shape_params={
+                "steps": shape_slat_sampling_steps,
+                "guidance_strength": shape_slat_guidance_strength,
+                "guidance_rescale": shape_slat_guidance_rescale,
+                "rescale_t": shape_slat_rescale_t,
+            },
+            tex_params={
+                "steps": tex_slat_sampling_steps,
+                "guidance_strength": tex_slat_guidance_strength,
+                "guidance_rescale": tex_slat_guidance_rescale,
+                "rescale_t": tex_slat_rescale_t,
+            },
+            pipeline_type={
+                "512": "512",
+                "1024": "1024_cascade",
+                "1536": "1536_cascade",
+            }[resolution],
+            nviews=STEPS,
+            profiling={
+                "enable_python": enable_python_profiling,
+                "enable_torch": enable_torch_profiling,
+                "enable_sync_hunter": enable_sync_hunter,
+                "delay_sec": profiler_delay_sec,
+                "max_duration_sec": profiler_max_duration_sec,
+                "max_events": profiler_max_events,
+            },
+        )
+    except Exception as e:
+        print(f"[ERROR] Generation failed: {e}")
+        return {}, empty_html
+
     # --- HTML Construction ---
     # The Stack of 48 Images
     images_html = ""
@@ -466,7 +469,6 @@ def image_to_3d(
         </div>
     </div>
     """
-    
     return state, full_html
 
 
@@ -475,7 +477,6 @@ def extract_glb(
     decimation_target: int,
     texture_size: int,
     req: gr.Request,
-    progress=gr.Progress(track_tqdm=True),
 ) -> Tuple[str, str]:
     """
     Extract a GLB file from the 3D model.
@@ -489,30 +490,130 @@ def extract_glb(
         str: The path to the extracted GLB file.
     """
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
-    shape_slat, tex_slat, res = unpack_state(state)
-    mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
-    glb = o_voxel.postprocess.to_glb(
-        vertices=mesh.vertices,
-        faces=mesh.faces,
-        attr_volume=mesh.attrs,
-        coords=mesh.coords,
-        attr_layout=pipeline.pbr_attr_layout,
-        grid_size=res,
-        aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-        decimation_target=decimation_target,
-        texture_size=texture_size,
-        remesh=True,
-        remesh_band=1,
-        remesh_project=0,
-        use_tqdm=True,
-    )
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%dT%H%M%S") + f".{now.microsecond // 1000:03d}"
     os.makedirs(user_dir, exist_ok=True)
     glb_path = os.path.join(user_dir, f'sample_{timestamp}.glb')
-    glb.export(glb_path, extension_webp=True)
-    torch.cuda.empty_cache()
+    worker.extract_glb(state, decimation_target, texture_size, glb_path)
     return glb_path, glb_path
+
+
+
+def create_input_panel():
+    with gr.Column(scale=1, min_width=360):
+        image_prompt = gr.Image(label="Image Prompt", format="png", image_mode="RGBA", type="pil", height=400)
+        
+        resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
+        seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
+        randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
+        decimation_target = gr.Slider(10000, 1000000, label="Decimation Target", value=50000, step=10000)
+        texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
+        
+        generate_btn = gr.Button("Generate")
+            
+        with gr.Accordion(label="Advanced Settings", open=False):                
+            gr.Markdown("Stage 1: Sparse Structure Generation")
+            with gr.Row():
+                ss_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=7.5, step=0.1)
+                ss_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.7, step=0.01)
+                ss_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
+                ss_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=5.0, step=0.1)
+            gr.Markdown("Stage 2: Shape Generation")
+            with gr.Row():
+                shape_slat_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=7.5, step=0.1)
+                shape_slat_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.5, step=0.01)
+                shape_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
+                shape_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)
+            gr.Markdown("Stage 3: Material Generation")
+            with gr.Row():
+                tex_slat_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=1.0, step=0.1)
+                tex_slat_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.0, step=0.01)
+                tex_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
+                tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)
+
+        with gr.Accordion(label="Debugging & Profiling", open=False):
+            gr.Markdown("Performance profiles and sync logs will be stored in `./tmp/profiling`.")
+            with gr.Row():
+                enable_python_profiling = gr.Checkbox(label="Enable Python Profiler", value=False)
+                enable_torch_profiling = gr.Checkbox(label="Enable PyTorch Profiler", value=False)
+                enable_sync_hunter = gr.Checkbox(label="Enable CUDA Sync Hunter", value=False)
+            with gr.Row():
+                profiler_delay_sec = gr.Slider(
+                    label="Start Delay (seconds)",
+                    minimum=0, maximum=300, value=80, step=5,
+                    info="Wait X seconds before starting to record."
+                )
+                profiler_max_duration_sec = gr.Slider(
+                    label="Recording Duration (seconds)",
+                    minimum=0, maximum=60, value=3, step=1,
+                    info="Stop recording after X seconds (0 = unlimited)."
+                )
+            profiler_max_events = gr.Slider(
+                label="Max Events (Datapoints)",
+                minimum=0, maximum=5000, value=300, step=50,
+                info="Stop recording after N operations (0 = unlimited)."
+            )
+
+    return {
+        "image_prompt": image_prompt,
+        "resolution": resolution,
+        "seed": seed,
+        "randomize_seed": randomize_seed,
+        "decimation_target": decimation_target,
+        "texture_size": texture_size,
+        "generate_btn": generate_btn,
+        "ss_guidance_strength": ss_guidance_strength,
+        "ss_guidance_rescale": ss_guidance_rescale,
+        "ss_sampling_steps": ss_sampling_steps,
+        "ss_rescale_t": ss_rescale_t,
+        "shape_slat_guidance_strength": shape_slat_guidance_strength,
+        "shape_slat_guidance_rescale": shape_slat_guidance_rescale,
+        "shape_slat_sampling_steps": shape_slat_sampling_steps,
+        "shape_slat_rescale_t": shape_slat_rescale_t,
+        "tex_slat_guidance_strength": tex_slat_guidance_strength,
+        "tex_slat_guidance_rescale": tex_slat_guidance_rescale,
+        "tex_slat_sampling_steps": tex_slat_sampling_steps,
+        "tex_slat_rescale_t": tex_slat_rescale_t,
+        "enable_python_profiling": enable_python_profiling,
+        "enable_torch_profiling": enable_torch_profiling,
+        "enable_sync_hunter": enable_sync_hunter,
+        "profiler_delay_sec": profiler_delay_sec,
+        "profiler_max_duration_sec": profiler_max_duration_sec,
+        "profiler_max_events": profiler_max_events,
+    }
+
+def create_preview_panel():
+    with gr.Column(scale=10):
+        with gr.Walkthrough(selected=0) as walkthrough:
+            with gr.Step("Preview", id=0):
+                preview_output = gr.HTML(empty_html, label="3D Asset Preview", show_label=True, container=True)
+                extract_btn = gr.Button("Extract GLB", interactive=False)
+            with gr.Step("Extract", id=1):
+                glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
+                download_btn = gr.DownloadButton(label="Download GLB")
+    
+    return {
+        "walkthrough": walkthrough,
+        "preview_output": preview_output,
+        "extract_btn": extract_btn,
+        "glb_output": glb_output,
+        "download_btn": download_btn
+    }
+
+def create_examples_panel(image_prompt):
+    with gr.Column(scale=1, min_width=172):
+        examples = gr.Examples(
+            examples=[
+                f'assets/example_image/{image}'
+                for image in os.listdir("assets/example_image")
+            ],
+            inputs=[image_prompt],
+            fn=preprocess_image,
+            outputs=[image_prompt],
+            run_on_click=True,
+            examples_per_page=18,
+        )
+    return examples
 
 
 with gr.Blocks(delete_cache=(600, 600)) as demo:
@@ -523,100 +624,67 @@ with gr.Blocks(delete_cache=(600, 600)) as demo:
     """)
     
     with gr.Row():
-        with gr.Column(scale=1, min_width=360):
-            image_prompt = gr.Image(label="Image Prompt", format="png", image_mode="RGBA", type="pil", height=400)
-            
-            resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
-            seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
-            randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-            decimation_target = gr.Slider(100000, 1000000, label="Decimation Target", value=500000, step=10000)
-            texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
-            
-            generate_btn = gr.Button("Generate")
-                
-            with gr.Accordion(label="Advanced Settings", open=False):                
-                gr.Markdown("Stage 1: Sparse Structure Generation")
-                with gr.Row():
-                    ss_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=7.5, step=0.1)
-                    ss_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.7, step=0.01)
-                    ss_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
-                    ss_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=5.0, step=0.1)
-                gr.Markdown("Stage 2: Shape Generation")
-                with gr.Row():
-                    shape_slat_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=7.5, step=0.1)
-                    shape_slat_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.5, step=0.01)
-                    shape_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
-                    shape_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)
-                gr.Markdown("Stage 3: Material Generation")
-                with gr.Row():
-                    tex_slat_guidance_strength = gr.Slider(1.0, 10.0, label="Guidance Strength", value=1.0, step=0.1)
-                    tex_slat_guidance_rescale = gr.Slider(0.0, 1.0, label="Guidance Rescale", value=0.0, step=0.01)
-                    tex_slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
-                    tex_slat_rescale_t = gr.Slider(1.0, 6.0, label="Rescale T", value=3.0, step=0.1)                
-
-        with gr.Column(scale=10):
-            with gr.Walkthrough(selected=0) as walkthrough:
-                with gr.Step("Preview", id=0):
-                    preview_output = gr.HTML(empty_html, label="3D Asset Preview", show_label=True, container=True)
-                    extract_btn = gr.Button("Extract GLB")
-                with gr.Step("Extract", id=1):
-                    glb_output = gr.Model3D(label="Extracted GLB", height=724, show_label=True, display_mode="solid", clear_color=(0.25, 0.25, 0.25, 1.0))
-                    download_btn = gr.DownloadButton(label="Download GLB")
-                    
-        with gr.Column(scale=1, min_width=172):
-            examples = gr.Examples(
-                examples=[
-                    f'assets/example_image/{image}'
-                    for image in os.listdir("assets/example_image")
-                ],
-                inputs=[image_prompt],
-                fn=preprocess_image,
-                outputs=[image_prompt],
-                run_on_click=True,
-                examples_per_page=18,
-            )
+        # 1. Input Panel
+        inputs = create_input_panel()
+        
+        # 2. Preview Panel
+        outputs = create_preview_panel()
+        
+        # 3. Examples Panel (Needs the image_prompt from inputs)
+        create_examples_panel(inputs["image_prompt"])
                     
     output_buf = gr.State()
-    
 
     # Handlers
     demo.load(start_session)
     demo.unload(end_session)
     
-    image_prompt.upload(
+    inputs["image_prompt"].upload(
         preprocess_image,
-        inputs=[image_prompt],
-        outputs=[image_prompt],
+        inputs=[inputs["image_prompt"]],
+        outputs=[inputs["image_prompt"]],
     )
 
-    generate_btn.click(
+    inputs["generate_btn"].click(
         get_seed,
-        inputs=[randomize_seed, seed],
-        outputs=[seed],
+        inputs=[inputs["randomize_seed"], inputs["seed"]],
+        outputs=[inputs["seed"]],
     ).then(
-        lambda: gr.Walkthrough(selected=0), outputs=walkthrough
+        lambda: gr.Walkthrough(selected=0), outputs=outputs["walkthrough"]
+    ).then(
+        lambda: gr.Button(interactive=False), outputs=outputs["extract_btn"],
     ).then(
         image_to_3d,
         inputs=[
-            image_prompt, seed, resolution,
-            ss_guidance_strength, ss_guidance_rescale, ss_sampling_steps, ss_rescale_t,
-            shape_slat_guidance_strength, shape_slat_guidance_rescale, shape_slat_sampling_steps, shape_slat_rescale_t,
-            tex_slat_guidance_strength, tex_slat_guidance_rescale, tex_slat_sampling_steps, tex_slat_rescale_t,
+            inputs["image_prompt"], inputs["seed"], inputs["resolution"],
+            inputs["ss_guidance_strength"], inputs["ss_guidance_rescale"], inputs["ss_sampling_steps"], inputs["ss_rescale_t"],
+            inputs["shape_slat_guidance_strength"], inputs["shape_slat_guidance_rescale"], inputs["shape_slat_sampling_steps"], inputs["shape_slat_rescale_t"],
+            inputs["tex_slat_guidance_strength"], inputs["tex_slat_guidance_rescale"], inputs["tex_slat_sampling_steps"], inputs["tex_slat_rescale_t"],
+            inputs["enable_python_profiling"], inputs["enable_torch_profiling"], inputs["enable_sync_hunter"],
+            inputs["profiler_delay_sec"], inputs["profiler_max_duration_sec"], inputs["profiler_max_events"],
         ],
-        outputs=[output_buf, preview_output],
+        outputs=[output_buf, outputs["preview_output"]],
+    ).then(
+        lambda: gr.Button(interactive=True), outputs=outputs["extract_btn"],
     )
     
-    extract_btn.click(
-        lambda: gr.Walkthrough(selected=1), outputs=walkthrough
+    outputs["extract_btn"].click(
+        lambda: gr.Walkthrough(selected=1), outputs=outputs["walkthrough"]
     ).then(
         extract_glb,
-        inputs=[output_buf, decimation_target, texture_size],
-        outputs=[glb_output, download_btn],
+        inputs=[output_buf, inputs["decimation_target"], inputs["texture_size"]],
+        outputs=[outputs["glb_output"], outputs["download_btn"]],
     )
         
 
 # Launch the Gradio app
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8080)
+    args, unknown = parser.parse_known_args()
+
     os.makedirs(TMP_DIR, exist_ok=True)
 
     # Construct ui components
@@ -625,22 +693,36 @@ if __name__ == "__main__":
         icon = Image.open(MODES[i]['icon'])
         MODES[i]['icon_base64'] = image_to_base64(icon)
 
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
+    worker = PipelineWorker()
+
+    def _cleanup():
+        worker.shutdown()
+
+    atexit.register(_cleanup)
+    signal.signal(signal.SIGINT, lambda *_: (atexit._run_exitfuncs(), exit(0)))
+    signal.signal(signal.SIGTERM, lambda *_: (atexit._run_exitfuncs(), exit(0)))
     
-    envmap = {
-        'forest': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/forest.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'sunset': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/sunset.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'courtyard': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/courtyard.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-    }
-    
-    demo.launch(css=css, head=head)
+    import socket
+    def _find_free_port(start=args.port, attempts=100):
+        for p in range(start, start + attempts):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex((args.host, p)) == 0:
+                    continue
+                if p!=args.port: 
+                    print(f"\nBinding to port {p} because requested port {args.port} is already used by something else.")
+                return p
+        raise RuntimeError(f"No free port found in range {start}-{start+attempts}")
+
+    port = _find_free_port(args.port)
+
+
+    app, local_url, share_url = demo.launch(
+        css=css, 
+        head=head, 
+        server_name=args.host, server_port=port,
+        prevent_thread_lock=True)
+    print("\n==============================================")
+    print(f"Keep gpu-hungry 3D programs disabled during generation (avoid photoshop/blender/unity).")
+    print(f"\nTo start work, open browser and enter  http://{args.host}:{port}  in the URL bar, like it's a website.")
+    print("==============================================")
+    demo.block_thread()

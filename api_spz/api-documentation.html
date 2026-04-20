@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trellis2-StableProjectorz API Documentation</title>
+    <style>
+        :root {
+            --primary-color: #c4b5fd;
+            --text-color: #d1d5db;
+            --bg-color: #0f172a;
+            --code-bg: #1e293b;
+            --border-color: #334155;
+            --endpoint-bg: #1e293b;
+            --nav-bg: #1e293b;
+            --description-color: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6; color: var(--text-color); background: var(--bg-color); padding: 2rem;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 2.5rem; margin-bottom: 2rem; color: var(--primary-color); }
+        h2 { font-size: 1.8rem; margin: 2rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--border-color); color: var(--primary-color); }
+        h3 { color: var(--text-color); margin: 1rem 0; }
+        .endpoint { margin-bottom: 2rem; padding: 1.5rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--endpoint-bg); }
+        .endpoint:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        .workflow-option { margin: 1rem 0; padding: 1rem; background: var(--code-bg); border-radius: 4px; border: 1px solid var(--border-color); }
+        .workflow-option h4 { color: var(--primary-color); margin-bottom: 0.5rem; }
+        .workflow-option ol { margin-left: 1.5rem; color: var(--text-color); }
+        .workflow-option li { margin: 0.5rem 0; }
+        .method { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: bold; margin-right: 1rem; }
+        .get { background: #10B981; color: white; }
+        .post { background: #3B82F6; color: white; }
+        .endpoint-path { font-family: monospace; font-size: 1.1rem; color: var(--text-color); }
+        .description { margin: 1rem 0; color: var(--description-color); }
+        code { background: var(--code-bg); padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; color: var(--text-color); }
+        pre { background: var(--code-bg); padding: 1rem; border-radius: 4px; overflow-x: auto; border: 1px solid var(--border-color); }
+        pre code { background: none; padding: 0; }
+        .parameter { margin: 0.5rem 0; padding: 0.5rem; background: var(--code-bg); border-radius: 4px; border: 1px solid var(--border-color); }
+        .parameter-name { font-weight: bold; color: var(--primary-color); }
+        .top-nav { position: sticky; top: 0; background: var(--nav-bg); padding: 1rem 0; margin-bottom: 2rem; border-bottom: 1px solid var(--border-color); z-index: 1000; }
+        .nav-list { list-style: none; display: flex; gap: 1rem; flex-wrap: wrap; }
+        .nav-list a { color: var(--text-color); text-decoration: none; padding: 0.5rem 1rem; border-radius: 4px; transition: background-color 0.2s; }
+        .nav-list a:hover { background: var(--code-bg); color: var(--primary-color); }
+        .response { margin-top: 1rem; }
+        .response strong { color: var(--primary-color); display: block; margin-bottom: 0.5rem; }
+        .note { margin: 1rem 0; padding: 0.75rem 1rem; border-left: 3px solid var(--primary-color); background: var(--code-bg); border-radius: 0 4px 4px 0; color: var(--description-color); }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+        th, td { text-align: left; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); }
+        th { background: var(--code-bg); color: var(--primary-color); }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Trellis2-StableProjectorz API</h1>
+
+    <div class="endpoint" style="margin-top: -1rem; margin-bottom: 2rem;">
+        <p style="color: var(--description-color);">
+            <strong style="color: var(--primary-color);">Version:</strong> 1.0.0 &nbsp;|&nbsp;
+            <strong style="color: var(--primary-color);">Default port:</strong> 7960 &nbsp;|&nbsp;
+            <strong style="color: var(--primary-color);">Launch:</strong> <code>python api_spz/main_api.py --host 127.0.0.1 --port 7960</code>
+        </p>
+        <p style="color: var(--description-color); margin-top: 0.5rem;">
+            Wraps <a href="https://github.com/microsoft/TRELLIS" style="color: var(--primary-color);">Microsoft TRELLIS.2-4B</a> for use with StableProjectorz.
+            Trellis 2 always generates shape + PBR texture in a single pass. Output is GLB with baked base color, metallic, and roughness maps.
+        </p>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="top-nav">
+        <ul class="nav-list">
+            <li><a href="#workflow">Workflow</a></li>
+            <li><a href="#ping">Ping</a></li>
+            <li><a href="#status">Status</a></li>
+            <li><a href="#generate">Generate (UI)</a></li>
+            <li><a href="#generate-single">Generate Single</a></li>
+            <li><a href="#generate-multi">Generate Multi</a></li>
+            <li><a href="#interrupt">Interrupt</a></li>
+            <li><a href="#download">Download</a></li>
+            <li><a href="#layout">UI Layout</a></li>
+            <li><a href="#operations">Operations</a></li>
+            <li><a href="#defaults">Defaults</a></li>
+        </ul>
+    </nav>
+
+    <!-- Workflow -->
+    <section id="workflow">
+        <h2>Generation Workflow</h2>
+        <div class="endpoint">
+            <h3>Typical Flow</h3>
+            <div class="note">All generation endpoints are <strong style="color: var(--primary-color);">synchronous</strong> &mdash; they block until generation completes and return the result directly.
+                Polling <code>GET /status</code> is optional and only useful for monitoring progress from a separate connection during a long generation.</div>
+            <div class="workflow-option">
+                <h4>StableProjectorz UI (recommended)</h4>
+                <ol>
+                    <li>SPZ fetches <code>GET /download/spz-ui-layout/generation-3d-panel</code> to build the UI panel</li>
+                    <li>User configures parameters and submits image(s)</li>
+                    <li>SPZ sends <code>POST /generate</code> with JSON body containing all parameters + base64 images</li>
+                    <li>Response arrives when generation is complete, containing <code>model_url</code></li>
+                    <li>SPZ downloads the GLB via <code>GET /download/model</code></li>
+                </ol>
+            </div>
+            <div class="workflow-option">
+                <h4>Direct API usage</h4>
+                <ol>
+                    <li><code>POST /generate_no_preview</code> (single image) or <code>POST /generate_multi_no_preview</code> (multi-image) with form data</li>
+                    <li>Response arrives when complete &mdash; contains <code>"model_url": "/download/model"</code></li>
+                    <li><code>GET /download/model</code> to retrieve the GLB</li>
+                </ol>
+            </div>
+            <div class="note">Trellis 2 is single-image only. Multi-image endpoints accept multiple images but use only the first one.</div>
+            <div class="note">Only one generation can run at a time. A second request while busy returns <code>503</code>.</div>
+        </div>
+    </section>
+
+    <!-- Ping -->
+    <section id="ping">
+        <h2>Endpoints</h2>
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="endpoint-path">/ping</span>
+            <p class="description">Health check. Returns server status and whether a generation is in progress.</p>
+            <div class="response">
+                <strong>Response:</strong>
+<pre><code>{
+    "status": "running",
+    "message": "Trellis2 API is operational",
+    "busy": false
+}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Status -->
+    <section id="status">
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="endpoint-path">/status</span>
+            <p class="description">Returns the status of the current or most recent generation. Useful for progress monitoring from a separate connection while a generation endpoint is blocking.</p>
+            <div class="response">
+                <strong>Response:</strong>
+<pre><code>{
+    "status": "PROCESSING" | "COMPLETE" | "FAILED",
+    "progress": 0-100,
+    "message": "Generating 3D mesh and texture...",
+    "busy": true
+}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Generate (UI) -->
+    <section id="generate">
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="endpoint-path">/generate</span>
+            <p class="description">Primary endpoint used by StableProjectorz. Accepts a JSON body with all parameters and base64-encoded images. Blocks until generation completes.</p>
+            <div class="parameters">
+                <strong style="color: var(--primary-color);">Request body (JSON):</strong>
+<pre><code>{
+    "seed": 1234,
+    "guidance_scale": 7.5,
+    "num_inference_steps": 12,
+    "resolution": 1,
+    "mesh_simplify": 50,
+    "apply_texture": true,
+    "single_multi_img_input": ["data:image/png;base64,iVBOR..."]
+}</code></pre>
+                <div class="parameter">
+                    <span class="parameter-name">seed</span> (int) &mdash; Random seed for reproducibility.
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">guidance_scale</span> (float, 1&ndash;10) &mdash; Controls sparse structure guidance strength. Higher = more faithful to input image.
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">num_inference_steps</span> (int, 1&ndash;50) &mdash; Sampling steps applied uniformly to all 3 pipeline stages (sparse structure, shape, texture).
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">resolution</span> (int) &mdash; Dropdown index: <code>0</code>&nbsp;=&nbsp;512, <code>1</code>&nbsp;=&nbsp;1024, <code>2</code>&nbsp;=&nbsp;1536. Maps to pipeline types <code>512</code>, <code>1024_cascade</code>, <code>1536_cascade</code>.
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">mesh_simplify</span> (int, 10&ndash;500) &mdash; Decimation target in thousands of faces. E.g. <code>50</code> = 50,000 faces.
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">apply_texture</span> (bool) &mdash; Present for UI consistency. Trellis 2 always generates texture; this flag has no effect.
+                </div>
+                <div class="parameter">
+                    <span class="parameter-name">single_multi_img_input</span> (list of strings) &mdash; Base64-encoded images. Only the first image is used.
+                </div>
+            </div>
+            <div class="response">
+                <strong>Response:</strong>
+<pre><code>{
+    "status": "COMPLETE",
+    "progress": 100,
+    "message": "Generation complete",
+    "model_url": "/download/model"
+}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Generate Single -->
+    <section id="generate-single">
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="endpoint-path">/generate_no_preview</span>
+            <p class="description">Direct generation from a single image via multipart form data. Blocks until generation completes.</p>
+            <div class="parameters">
+                <strong style="color: var(--primary-color);">Form parameters:</strong>
+                <div class="parameter"><span class="parameter-name">file</span> (UploadFile, optional) &mdash; Image file upload.</div>
+                <div class="parameter"><span class="parameter-name">image_base64</span> (string, optional) &mdash; Base64-encoded image. Provide either <code>file</code> or <code>image_base64</code>.</div>
+                <div class="parameter"><span class="parameter-name">seed</span> (int, default 1234)</div>
+                <div class="parameter"><span class="parameter-name">guidance_scale</span> (float, default 7.5)</div>
+                <div class="parameter"><span class="parameter-name">num_inference_steps</span> (int, default 12)</div>
+                <div class="parameter"><span class="parameter-name">resolution</span> (int, default 1024) &mdash; Raw value: 512, 1024, or 1536. Values are snapped to the nearest valid option.</div>
+                <div class="parameter"><span class="parameter-name">mesh_simplify</span> (int, default 50) &mdash; In thousands of faces.</div>
+                <div class="parameter"><span class="parameter-name">texture_size</span> (int, default 2048) &mdash; Baked texture resolution in pixels.</div>
+                <div class="parameter"><span class="parameter-name">output_format</span> (string, default "glb") &mdash; Only GLB is supported.</div>
+            </div>
+            <div class="response">
+                <strong>Response:</strong> Same as <code>/generate</code>.
+            </div>
+        </div>
+    </section>
+
+    <!-- Generate Multi -->
+    <section id="generate-multi">
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="endpoint-path">/generate_multi_no_preview</span>
+            <p class="description">Accepts multiple images via multipart form data. Trellis 2 uses only the first image. Blocks until generation completes.</p>
+            <div class="parameters">
+                <strong style="color: var(--primary-color);">Form parameters:</strong>
+                <div class="parameter"><span class="parameter-name">file_list</span> (list of UploadFile, optional) &mdash; Multiple image file uploads.</div>
+                <div class="parameter"><span class="parameter-name">image_list_base64</span> (list of strings, optional) &mdash; Multiple base64-encoded images.</div>
+                <div class="parameter">All other parameters same as <code>/generate_no_preview</code>.</div>
+            </div>
+            <div class="response">
+                <strong>Response:</strong> Same as <code>/generate</code>.
+            </div>
+        </div>
+    </section>
+
+    <!-- Interrupt -->
+    <section id="interrupt">
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="endpoint-path">/interrupt</span>
+            <p class="description">Cancel the current generation. The cancellation is injected between sampling steps and typically takes effect within 1&ndash;2 seconds.
+                The blocked generation endpoint will return <code>499</code>.</p>
+            <div class="response">
+                <strong>Response:</strong>
+<pre><code>{"status": "interrupt_requested"}
+// or if nothing is running:
+{"status": "no_generation_in_progress"}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download -->
+    <section id="download">
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="endpoint-path">/download/model</span>
+            <p class="description">Download the generated GLB file. Available after generation completes successfully. Returns <code>404</code> if no model exists.</p>
+            <div class="response">
+                <strong>Response:</strong> Binary GLB file (<code>model/gltf-binary</code>), with PBR textures stored as PNG.
+            </div>
+        </div>
+    </section>
+
+    <!-- UI Layout -->
+    <section id="layout">
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="endpoint-path">/download/spz-ui-layout/generation-3d-panel</span>
+            <p class="description">Returns the StableProjectorz UI layout definition as plain text. SPZ uses this to dynamically build the generation panel with sliders, dropdowns, and toggles.</p>
+            <div class="response">
+                <strong>Response:</strong> Plain text (<code>text/plain; charset=utf-8</code>).
+            </div>
+        </div>
+    </section>
+
+    <!-- Supported Operations -->
+    <section id="operations">
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="endpoint-path">/info/supported_operations</span>
+            <p class="description">Returns the list of supported operation types. Trellis 2 always generates mesh with texture in a single pass.</p>
+            <div class="response">
+                <strong>Response:</strong>
+<pre><code>["make_meshes_and_tex"]</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Defaults Reference -->
+    <section id="defaults">
+        <h2>Pipeline Defaults Reference</h2>
+        <div class="endpoint">
+            <p class="description">Trellis 2 runs three sampling stages internally. The SPZ UI exposes <code>guidance_scale</code> (controls sparse structure guidance) and <code>num_inference_steps</code> (applied to all stages).
+                All other sampler parameters are hardcoded to match the official Gradio app defaults:</p>
+            <table>
+                <tr><th>Stage</th><th>guidance_strength</th><th>guidance_rescale</th><th>steps</th><th>rescale_t</th></tr>
+                <tr><td>1. Sparse Structure</td><td><em>user slider</em> (def 7.5)</td><td>0.7</td><td><em>user slider</em> (def 12)</td><td>5.0</td></tr>
+                <tr><td>2. Shape</td><td>7.5</td><td>0.5</td><td><em>user slider</em> (def 12)</td><td>3.0</td></tr>
+                <tr><td>3. Texture</td><td>1.0</td><td>0.0</td><td><em>user slider</em> (def 12)</td><td>3.0</td></tr>
+            </table>
+            <div class="note" style="margin-top: 1rem;">
+                <strong style="color: var(--primary-color);">Resolution mapping:</strong>
+                512 &rarr; pipeline type <code>512</code> &nbsp;|&nbsp;
+                1024 &rarr; <code>1024_cascade</code> &nbsp;|&nbsp;
+                1536 &rarr; <code>1536_cascade</code>
+            </div>
+            <div class="note">
+                <strong style="color: var(--primary-color);">GLB export:</strong>
+                Remeshing enabled (<code>remesh_band=1</code>, <code>remesh_project=0</code>).
+                Mesh simplified to nvdiffrast limit (16M triangles) before export, then decimated to user-specified face count.
+                PBR texture baked from the voxel attribute volume via trilinear sampling. Textures stored as PNG inside the GLB.
+            </div>
+        </div>
+    </section>
+
+    <!-- Error Codes -->
+    <section>
+        <h2>Error Codes</h2>
+        <div class="endpoint">
+            <table>
+                <tr><th>Code</th><th>Meaning</th></tr>
+                <tr><td>400</td><td>Invalid parameters or missing image</td></tr>
+                <tr><td>404</td><td>Model file not found (no generation completed yet)</td></tr>
+                <tr><td>499</td><td>Generation cancelled by user via <code>/interrupt</code></td></tr>
+                <tr><td>500</td><td>Internal server error during generation</td></tr>
+                <tr><td>503</td><td>Server busy &mdash; another generation is already running</td></tr>
+            </table>
+        </div>
+    </section>
+
+</div>
+</body>
+</html>

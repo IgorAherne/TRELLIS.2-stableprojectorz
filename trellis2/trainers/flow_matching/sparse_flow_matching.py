@@ -1,3 +1,4 @@
+# File: trellis2/trainers/flow_matching/sparse_flow_matching.py
 # trellis2/trainers/flow_matching/sparse_flow_matching.py
 from typing import *
 import os

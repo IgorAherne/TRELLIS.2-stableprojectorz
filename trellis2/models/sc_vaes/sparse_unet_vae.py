@@ -1,3 +1,4 @@
+# File: trellis2/models/sc_vaes/sparse_unet_vae.py
 # trellis2/models/sc_vaes/sparse_unet_vae.py
 from typing import *
 import torch
@@ -74,12 +75,25 @@ class SparseResBlock3d(nn.Module):
             h = self.conv1(h)
         h = self._updown(h, subdiv)
         x = self._updown(x, subdiv)
+        # Compute skip early and offload — frees ~935MB during conv1/conv2
+        skip = self.skip_connection(x)
+        if not self.training and skip.feats.numel() > 2_000_000:
+            skip_feats_cpu = skip.feats.cpu()
+            del skip
+            x.feats = torch.empty(0, device='cpu')
+            torch.cuda.empty_cache()
+        else:
+            skip_feats_cpu = None
         if self.resample_mode == 'nearest':
             h = self.conv1(h)
         h = h.replace(self.norm2(h.feats))
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
-        h = h + self.skip_connection(x)
+        if skip_feats_cpu is not None:
+            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            del skip_feats_cpu
+        else:
+            h = h + skip
         if self.upsample:
             return h, subdiv
         return h
@@ -160,17 +174,30 @@ class SparseResBlockUpsample3d(nn.Module):
         subdiv_binarized = subdiv.replace(subdiv.feats > 0) if subdiv is not None else None
         h = self.updown(h, subdiv_binarized)
         x = self.updown(x, subdiv_binarized)
+        skip = self.skip_connection(x)
+        if not self.training and skip.feats.numel() > 2_000_000:
+            skip_feats_cpu = skip.feats.cpu()
+            del skip
+            x.feats = torch.empty(0, device='cpu')
+            torch.cuda.empty_cache()
+        else:
+            skip_feats_cpu = None
         h = self.conv1(h)
         h = h.replace(self.norm2(h.feats))
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
-        h = h + self.skip_connection(x)
+        if skip_feats_cpu is not None:
+            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            del skip_feats_cpu
+        else:
+            h = h + skip
         if self.pred_subdiv:
             return h, subdiv
         else:
             return h
     
     def forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
+        torch.cuda.empty_cache()
         if self.use_checkpoint:
             return torch.utils.checkpoint.checkpoint(self._forward, x, use_reentrant=False)
         else:
@@ -247,16 +274,29 @@ class SparseResBlockC2S3d(nn.Module):
         subdiv_binarized = subdiv.replace(subdiv.feats > 0) if subdiv is not None else None
         h = self.updown(h, subdiv_binarized)
         x = self.updown(x, subdiv_binarized)
+        skip = self.skip_connection(x)
+        if not self.training and skip.feats.numel() > 2_000_000:
+            skip_feats_cpu = skip.feats.cpu()
+            del skip
+            x.feats = torch.empty(0, device='cpu')
+            torch.cuda.empty_cache()
+        else:
+            skip_feats_cpu = None
         h = h.replace(self.norm2(h.feats))
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
-        h = h + self.skip_connection(x)
+        if skip_feats_cpu is not None:
+            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            del skip_feats_cpu
+        else:
+            h = h + skip
         if self.pred_subdiv:
             return h, subdiv
         else:
             return h
     
     def forward(self, x: sp.SparseTensor, subdiv: sp.SparseTensor = None) -> sp.SparseTensor:
+        torch.cuda.empty_cache()
         if self.use_checkpoint:
             return torch.utils.checkpoint.checkpoint(self._forward, x, subdiv, use_reentrant=False)
         else:
@@ -284,9 +324,18 @@ class SparseConvNeXtBlock3d(nn.Module):
 
     def _forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
         h = self.conv(x)
+        if not self.training and x.feats.numel() > 2_000_000:
+            x_feats_cpu = x.feats.cpu()
+            x.feats = torch.empty(0, device='cpu')
+            torch.cuda.empty_cache()
+        else:
+            x_feats_cpu = None
         h = h.replace(self.norm(h.feats))
         h = h.replace(self.mlp(h.feats))
-        return h + x
+        if x_feats_cpu is not None:
+            return h + h.replace(x_feats_cpu.to(h.feats.device))
+        else:
+            return h + x
     
     def forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
         if self.use_checkpoint:
@@ -355,12 +404,14 @@ class SparseUnetVaeEncoder(nn.Module):
         Convert the torso of the model to float16.
         """
         self.blocks.apply(convert_module_to_f16)
+        self.to_latent.apply(convert_module_to_f16)
 
     def convert_to_fp32(self) -> None:
         """
         Convert the torso of the model to float32.
         """
         self.blocks.apply(convert_module_to_f32)
+        self.to_latent.apply(convert_module_to_f32)
 
     def initialize_weights(self) -> None:
         # Initialize transformer layers:
@@ -377,7 +428,8 @@ class SparseUnetVaeEncoder(nn.Module):
         for i, res in enumerate(self.blocks):
             for j, block in enumerate(res):
                 h = block(h)
-        h = h.type(x.dtype)
+        if self.training:
+            h = h.type(x.dtype)
         h = h.replace(F.layer_norm(h.feats, h.feats.shape[-1:]))
         h = self.to_latent(h)
         
@@ -460,12 +512,14 @@ class SparseUnetVaeDecoder(nn.Module):
         Convert the torso of the model to float16.
         """
         self.blocks.apply(convert_module_to_f16)
+        self.output_layer.apply(convert_module_to_f16)
 
     def convert_to_fp32(self) -> None:
         """
         Convert the torso of the model to float32.
         """
         self.blocks.apply(convert_module_to_f32)
+        self.output_layer.apply(convert_module_to_f32)
 
     def initialize_weights(self) -> None:
         # Initialize transformer layers:
@@ -482,6 +536,7 @@ class SparseUnetVaeDecoder(nn.Module):
         
         h = self.from_latent(x)
         h = h.type(self.dtype)
+        
         subs_gt = []
         subs = []
         for i, res in enumerate(self.blocks):
@@ -496,7 +551,11 @@ class SparseUnetVaeDecoder(nn.Module):
                         h = block(h, subdiv=guide_subs[i] if guide_subs is not None else None)
                 else:
                     h = block(h)
-        h = h.type(x.dtype)
+            # Free stale cached blocks after each resolution level
+            torch.cuda.empty_cache()
+
+        if self.training:
+            h = h.type(x.dtype)
         h = h.replace(F.layer_norm(h.feats, h.feats.shape[-1:]))
         h = self.output_layer(h)
         if self.training and self.pred_subdiv:
@@ -515,9 +574,13 @@ class SparseUnetVaeDecoder(nn.Module):
         for i, res in enumerate(self.blocks):
             if i == upsample_times:
                 return h.coords
+            if self.low_vram:
+                res.to(x.device)
             for j, block in enumerate(res):
                 if i < len(self.blocks) - 1 and j == len(res) - 1:
                     h, sub = block(h)
                 else:
                     h = block(h)
-       
+            if self.low_vram:
+                res.cpu()
+            torch.cuda.empty_cache()

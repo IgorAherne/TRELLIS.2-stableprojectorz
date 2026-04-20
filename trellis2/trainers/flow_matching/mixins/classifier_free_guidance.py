@@ -1,3 +1,4 @@
+# File: trellis2/trainers/flow_matching/mixins/classifier_free_guidance.py
 # trellis2/trainers/flow_matching/mixins/classifier_free_guidance.py
 import torch
 import numpy as np

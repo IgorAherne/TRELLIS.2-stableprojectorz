@@ -1,3 +1,4 @@
+# File: trellis2/datasets/structured_latent_svpbr.py
 # trellis2/datasets/structured_latent_svpbr.py
 import os
 import json

@@ -1,3 +1,4 @@
+# File: trellis2/utils/mesh_utils.py
 # trellis2/utils/mesh_utils.py
 from typing import Tuple, Dict
 import numpy as np

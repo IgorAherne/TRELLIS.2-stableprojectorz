@@ -1,3 +1,4 @@
+# File: trellis2/trainers/vae/pbr_vae.py
 # trellis2/trainers/vae/pbr_vae.py
 from typing import *
 import os

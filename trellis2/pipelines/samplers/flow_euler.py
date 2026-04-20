@@ -1,3 +1,4 @@
+# File: trellis2/pipelines/samplers/flow_euler.py
 # trellis2/pipelines/samplers/flow_euler.py
 from typing import *
 import torch
@@ -43,7 +44,7 @@ class FlowEulerSampler(Sampler):
         return ((1 - self.sigma_min) * x_t - x_0) / (self.sigma_min + (1 - self.sigma_min) * t)
 
     def _inference_model(self, model, x_t, t, cond=None, **kwargs):
-        t = torch.tensor([1000 * t] * x_t.shape[0], device=x_t.device, dtype=torch.float32)
+        t = torch.full((x_t.shape[0],), 1000 * t, device=x_t.device, dtype=torch.float32)
         return model(x_t, t, cond, **kwargs)
 
     def _get_model_prediction(self, model, x_t, t, cond=None, **kwargs):
@@ -118,11 +119,17 @@ class FlowEulerSampler(Sampler):
         t_seq = t_seq.tolist()
         t_pairs = list((t_seq[i], t_seq[i + 1]) for i in range(steps))
         ret = edict({"samples": None, "pred_x_t": [], "pred_x_0": []})
-        for t, t_prev in tqdm(t_pairs, desc=tqdm_desc, disable=not verbose):
+        
+        import time as _time
+
+        for i, (t, t_prev) in enumerate(tqdm(t_pairs, desc=tqdm_desc, disable=not verbose)):
+            _t0 = _time.time()
             out = self.sample_once(model, sample, t, t_prev, cond, **kwargs)
+            print(f"[TIMING] {tqdm_desc} step {i}: {_time.time()-_t0:.2f}s")
             sample = out.pred_x_prev
             ret.pred_x_t.append(out.pred_x_prev)
             ret.pred_x_0.append(out.pred_x_0)
+            _time.sleep(0)  # Yield GIL to Gradio's event loop
         ret.samples = sample
         return ret
 

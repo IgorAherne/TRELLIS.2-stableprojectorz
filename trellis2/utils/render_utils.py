@@ -1,3 +1,4 @@
+# File: trellis2/utils/render_utils.py
 # trellis2/utils/render_utils.py
 import torch
 import numpy as np
@@ -46,14 +47,19 @@ def get_renderer(sample, **kwargs):
         renderer.rendering_options.resolution = kwargs.get('resolution', 512)
         renderer.rendering_options.near = kwargs.get('near', 1)
         renderer.rendering_options.far = kwargs.get('far', 100)
-        renderer.rendering_options.ssaa = kwargs.get('ssaa', 2)
-        renderer.rendering_options.peel_layers = kwargs.get('peel_layers', 8)
+        
+        # FIX: Lower the defaults here from 2 -> 1, and 8 -> 4
+        renderer.rendering_options.ssaa = kwargs.get('ssaa', 1)
+        renderer.rendering_options.peel_layers = kwargs.get('peel_layers', 4)
+        
     elif isinstance(sample, Mesh):
         renderer = MeshRenderer()
         renderer.rendering_options.resolution = kwargs.get('resolution', 512)
         renderer.rendering_options.near = kwargs.get('near', 1)
         renderer.rendering_options.far = kwargs.get('far', 100)
-        renderer.rendering_options.ssaa = kwargs.get('ssaa', 2)
+        
+        # FIX: Lower the default here as well
+        renderer.rendering_options.ssaa = kwargs.get('ssaa', 1)
         renderer.rendering_options.chunk_size = kwargs.get('chunk_size', None)
     elif isinstance(sample, Voxel):
         renderer = VoxelRenderer()
@@ -69,12 +75,17 @@ def get_renderer(sample, **kwargs):
 def render_frames(sample, extrinsics, intrinsics, options={}, verbose=True, **kwargs):
     renderer = get_renderer(sample, **options)
     rets = {}
-    for j, (extr, intr) in tqdm(enumerate(zip(extrinsics, intrinsics)), total=len(extrinsics), desc='Rendering', disable=not verbose):
-        res = renderer.render(sample, extr, intr, **kwargs)
-        for k, v in res.items():
-            if k not in rets: rets[k] = []
-            if v.dim() == 2: v = v[None].repeat(3, 1, 1)
-            rets[k].append(np.clip(v.detach().cpu().numpy().transpose(1, 2, 0) * 255, 0, 255).astype(np.uint8))
+    
+    with torch.inference_mode():
+        for j, (extr, intr) in tqdm(enumerate(zip(extrinsics, intrinsics)), total=len(extrinsics), desc='Rendering', disable=not verbose):
+            res = renderer.render(sample, extr, intr, **kwargs)
+            for k, v in res.items():
+                if k not in rets: rets[k] = []
+                if v.dim() == 2: v = v[None].repeat(3, 1, 1)
+                rets[k].append(np.clip(v.cpu().numpy().transpose(1, 2, 0) * 255, 0, 255).astype(np.uint8))
+            
+            torch.cuda.empty_cache() 
+            
     return rets
 
 

@@ -1,3 +1,4 @@
+# File: trellis2/renderers/pbr_mesh_renderer.py
 # trellis2/renderers/pbr_mesh_renderer.py
 from typing import *
 import torch
@@ -45,10 +46,33 @@ class EnvMap:
         if not hasattr(self, '_nvdiffrec_envlight'):
             if 'EnvironmentLight' not in globals():
                 from nvdiffrec_render.light import EnvironmentLight
-            cubemap = latlong_to_cubemap(self.image, [512, 512])
-            self._nvdiffrec_envlight = EnvironmentLight(cubemap)
-            self._nvdiffrec_envlight.build_mips()
+            # Force out of inference_mode — build_mips() uses autograd internally
+            # and populates module-level caches that must not be inference tensors
+            with torch.inference_mode(False):
+                cubemap = latlong_to_cubemap(self.image, [512, 512])
+                self._nvdiffrec_envlight = EnvironmentLight(cubemap)
+                self._nvdiffrec_envlight.build_mips()
+            # Source HDR image no longer needed — cubemap is used for all rendering
+            del self.image
         return self._nvdiffrec_envlight
+
+    def offload(self):
+        """Save cubemap to CPU and tear down the entire EnvironmentLight to free GPU memory."""
+        if hasattr(self, '_nvdiffrec_envlight'):
+            self._cubemap_cpu = self._nvdiffrec_envlight.base.cpu()
+            del self._nvdiffrec_envlight
+
+    def reload(self):
+        """Rebuild EnvironmentLight from saved CPU cubemap."""
+        if hasattr(self, '_cubemap_cpu'):
+            # Catch any async CUDA errors from prior mesh processing
+            torch.cuda.synchronize()
+            if 'EnvironmentLight' not in globals():
+                from nvdiffrec_render.light import EnvironmentLight
+            with torch.inference_mode(False):
+                self._nvdiffrec_envlight = EnvironmentLight(self._cubemap_cpu.cuda().clone())
+                self._nvdiffrec_envlight.build_mips()
+            del self._cubemap_cpu
 
     def shade(self, gb_pos, gb_normal, kd, ks, view_pos, specular=True):
         return self._backend.shade(gb_pos, gb_normal, kd, ks, view_pos, specular)
@@ -136,14 +160,15 @@ def screen_space_ambient_occlusion(
     
     # start sampling
     for _ in range(samples):
-        # sample normal distribution, if inside, flip the sign
-        rnd_vec = torch.randn(H, W, 3, device=device)
-        rnd_vec = F.normalize(rnd_vec, p=2, dim=-1)
-        dot_val = torch.sum(rnd_vec * normal, dim=-1, keepdim=True)
+        rnd_vec = torch.randn(H, W, 3, device=device, dtype=torch.float16)
+        rnd_vec = F.normalize(rnd_vec, p=2.0, dim=-1)
+        dot_val = torch.sum(rnd_vec * normal.half(), dim=-1, keepdim=True)
         sample_dir = torch.sign(dot_val) * rnd_vec
-        scale = torch.rand(H, W, 1, device=device)
+        
+        scale = torch.rand(H, W, 1, device=device, dtype=torch.float16)
         scale = scale * scale
-        sample_pos = view_pos + sample_dir * radius * scale
+        
+        sample_pos = view_pos + (sample_dir * radius * scale).float()
         sample_z = sample_pos[..., 2]
         
         # project to screen space
@@ -265,11 +290,13 @@ class PbrMeshRenderer:
         extrinsics = extrinsics.unsqueeze(0)
         
         vertices = mesh.vertices.unsqueeze(0)
-        vertices_orig = vertices.clone()
         vertices_homo = torch.cat([vertices, torch.ones_like(vertices[..., :1])], dim=-1)
         if transformation is not None:
+            vertices_orig = vertices.clone()
             vertices_homo = torch.bmm(vertices_homo, transformation.unsqueeze(0).transpose(-1, -2))
             vertices = vertices_homo[..., :3].contiguous()
+        else:
+            vertices_orig = vertices  # No transform — no copy needed
         vertices_camera = torch.bmm(vertices_homo, extrinsics.transpose(-1, -2))
         vertices_clip = torch.bmm(vertices_homo, full_proj.transpose(-1, -2))
         faces = mesh.faces
@@ -288,6 +315,14 @@ class PbrMeshRenderer:
         normal = torch.zeros((resolution * ssaa, resolution * ssaa, 3), dtype=torch.float32, device=self.device)
         max_w = torch.zeros((resolution * ssaa, resolution * ssaa, 1), dtype=torch.float32, device=self.device)
         alpha = torch.zeros((resolution * ssaa, resolution * ssaa, 1), dtype=torch.float32, device=self.device)
+
+        # Pre-compute tensors reused across peel layers
+        face_idx_for_normal = torch.arange(face_normal.shape[0], dtype=torch.int, device=self.device).unsqueeze(1).expand(-1, 3).contiguous()
+        if isinstance(mesh, MeshWithVoxel):
+            if 'grid_sample_3d' not in globals():
+                from flex_gemm.ops.grid_sample import grid_sample_3d
+            voxel_coords_with_batch = torch.cat([torch.zeros_like(mesh.coords[..., :1]), mesh.coords], dim=-1)
+
         with dr.DepthPeeler(self.glctx, vertices_clip, faces, (resolution * ssaa, resolution * ssaa)) as peeler:
             for _ in range(self.rendering_options["peel_layers"]):
                 rast, rast_db = peeler.rasterize_next_layer()
@@ -299,7 +334,7 @@ class PbrMeshRenderer:
                 gb_depth = dr.interpolate(vertices_camera[..., 2:3].contiguous(), rast, faces)[0][0]
                         
                 # Normal
-                gb_normal = dr.interpolate(face_normal.unsqueeze(0), rast, torch.arange(face_normal.shape[0], dtype=torch.int, device=self.device).unsqueeze(1).repeat(1, 3).contiguous())[0][0]
+                gb_normal = dr.interpolate(face_normal.unsqueeze(0), rast, face_idx_for_normal)[0][0]
                 gb_normal = torch.where(
                     torch.sum(gb_normal * (pos - rays_o), dim=-1, keepdim=True) > 0,
                     -gb_normal,
@@ -313,19 +348,18 @@ class PbrMeshRenderer:
                 
                 # PBR attributes
                 if isinstance(mesh, MeshWithVoxel):
-                    if 'grid_sample_3d' not in globals():
-                        from flex_gemm.ops.grid_sample import grid_sample_3d
                     mask = rast[..., -1:] > 0
                     xyz = dr.interpolate(vertices_orig, rast, faces)[0]
                     xyz = ((xyz - mesh.origin) / mesh.voxel_size).reshape(1, -1, 3)
                     img = grid_sample_3d(
                         mesh.attrs,
-                        torch.cat([torch.zeros_like(mesh.coords[..., :1]), mesh.coords], dim=-1),
+                        voxel_coords_with_batch,
                         mesh.voxel_shape,
                         xyz,
                         mode='trilinear'
                     )
                     img = img.reshape(1, resolution * ssaa, resolution * ssaa, mesh.attrs.shape[-1]) * mask
+                    img = img.float()  # nvdiffrast shade/texture requires float32 inputs
                     gb_basecolor = img[0, ..., mesh.layout['base_color']]
                     gb_metallic = img[0, ..., mesh.layout['metallic']]
                     gb_roughness = img[0, ..., mesh.layout['roughness']]
@@ -439,7 +473,7 @@ class PbrMeshRenderer:
                     )[0]
                     for e in envmap.values()
                 ], dim=0)
-                
+
                 # Compositing
                 w = (1 - alpha) * gb_alpha
                 depth = torch.where(w > max_w, gb_depth, depth)

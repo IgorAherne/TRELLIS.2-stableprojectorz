@@ -1,3 +1,4 @@
+# File: trellis2/datasets/sparse_structure_latent.py
 # trellis2/datasets/sparse_structure_latent.py
 import os
 import json

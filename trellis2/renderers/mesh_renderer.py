@@ -1,3 +1,4 @@
+# File: trellis2/renderers/mesh_renderer.py
 # trellis2/renderers/mesh_renderer.py
 from typing import *
 import torch

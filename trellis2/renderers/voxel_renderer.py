@@ -1,3 +1,4 @@
+# File: trellis2/renderers/voxel_renderer.py
 # trellis2/renderers/voxel_renderer.py
 import torch
 from easydict import EasyDict as edict

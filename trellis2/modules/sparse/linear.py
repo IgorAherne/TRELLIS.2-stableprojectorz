@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/linear.py
 # trellis2/modules/sparse/linear.py
 import torch
 import torch.nn as nn

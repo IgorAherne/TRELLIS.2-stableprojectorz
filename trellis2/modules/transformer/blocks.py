@@ -1,3 +1,4 @@
+# File: trellis2/modules/transformer/blocks.py
 # trellis2/modules/transformer/blocks.py
 from typing import *
 import torch

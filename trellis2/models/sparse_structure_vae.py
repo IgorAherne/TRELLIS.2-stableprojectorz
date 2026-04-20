@@ -1,3 +1,4 @@
+# File: trellis2/models/sparse_structure_vae.py
 # trellis2/models/sparse_structure_vae.py
 from typing import *
 import torch

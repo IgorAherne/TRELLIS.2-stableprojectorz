@@ -1,3 +1,4 @@
+# File: trellis2/renderers/__init__.py
 # trellis2/renderers/__init__.py
 import importlib
 

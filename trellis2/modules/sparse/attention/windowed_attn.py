@@ -1,3 +1,4 @@
+# File: trellis2/modules/sparse/attention/windowed_attn.py
 # trellis2/modules/sparse/attention/windowed_attn.py
 from typing import *
 import torch
