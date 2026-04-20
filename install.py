@@ -132,12 +132,18 @@ def download_models():
     MODELS = [
         {
             "name": "dinov3",
-            "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+            "urls": [
+                "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/dinov3.zip",
+                "https://sourceforge.net/projects/trellis-2-stableprojectorz/files/extra-models/dinov3.zip/download",
+            ],
             "check_file": models_dir / "dinov3" / "model.safetensors",
         },
         {
             "name": "RMBG-2.0",
-            "url": "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+            "urls": [
+                "https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/download/extra-models/RMBG-2.0.zip",
+                "https://sourceforge.net/projects/trellis-2-stableprojectorz/files/extra-models/RMBG-2.0.zip/download",
+            ],
             "check_file": models_dir / "RMBG-2.0" / "model.safetensors",
         },
     ]
@@ -148,31 +154,44 @@ def download_models():
             continue
 
         zip_path = models_dir / f"{model['name']}.zip"
-        print(f"\nDownloading {model['name']} from {model['url']}")
+        downloaded = False
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                if attempt > 0:
-                    print(f"Retry attempt {attempt + 1}/{MAX_RETRIES}...")
-                    time.sleep(RETRY_DELAY)
-
-                def _reporthook(block_num, block_size, total_size):
-                    downloaded = block_num * block_size
-                    if total_size > 0:
-                        pct = min(downloaded * 100 / total_size, 100)
-                        mb_down = downloaded / (1024 * 1024)
-                        mb_total = total_size / (1024 * 1024)
-                        print(f"\r  {mb_down:.1f}/{mb_total:.1f} MB ({pct:.0f}%)", end="", flush=True)
-
-                urllib.request.urlretrieve(model["url"], str(zip_path), reporthook=_reporthook)
-                print()  # newline after progress
+        for url_idx, url in enumerate(model["urls"]):
+            if downloaded:
                 break
-            except Exception as e:
-                print(f"\nDownload failed: {e}")
-                if zip_path.exists():
-                    zip_path.unlink()
-                if attempt == MAX_RETRIES - 1:
-                    raise InstallationError(f"Failed to download {model['name']} after {MAX_RETRIES} attempts")
+            mirror_label = f"mirror {url_idx + 1}/{len(model['urls'])}"
+            print(f"\nDownloading {model['name']} from {mirror_label}: {url}")
+
+            for attempt in range(MAX_RETRIES):
+                try:
+                    if attempt > 0:
+                        print(f"  Retry attempt {attempt + 1}/{MAX_RETRIES}...")
+                        time.sleep(RETRY_DELAY)
+
+                    def _reporthook(block_num, block_size, total_size):
+                        dl = block_num * block_size
+                        if total_size > 0:
+                            pct = min(dl * 100 / total_size, 100)
+                            mb_down = dl / (1024 * 1024)
+                            mb_total = total_size / (1024 * 1024)
+                            print(f"\r  {mb_down:.1f}/{mb_total:.1f} MB ({pct:.0f}%)", end="", flush=True)
+
+                    urllib.request.urlretrieve(url, str(zip_path), reporthook=_reporthook)
+                    print()  # newline after progress
+                    downloaded = True
+                    break
+                except Exception as e:
+                    print(f"\n  Download failed: {e}")
+                    if zip_path.exists():
+                        zip_path.unlink()
+                    if attempt == MAX_RETRIES - 1:
+                        print(f"  All {MAX_RETRIES} attempts failed for {mirror_label}. Trying next mirror...")
+
+        if not downloaded:
+            raise InstallationError(
+                f"Failed to download {model['name']} from all {len(model['urls'])} mirrors"
+            )
+
         # Extract
         print(f"  Extracting {model['name']}...")
         import zipfile
