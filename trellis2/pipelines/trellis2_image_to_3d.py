@@ -587,7 +587,6 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         for m, v in zip(meshes, tex_voxels):
             m.vertices = m.vertices.cuda()
             m.faces = m.faces.cuda()
-            m.fill_holes()
             out_mesh.append(
                 MeshWithVoxel(
                     m.vertices, m.faces,

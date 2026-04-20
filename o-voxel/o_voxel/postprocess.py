@@ -153,7 +153,6 @@ def to_glb(
         mesh.remove_duplicate_faces()
         mesh.repair_non_manifold_edges()
         mesh.remove_small_connected_components(1e-5)
-        mesh.fill_holes(max_hole_perimeter=3e-2)
         if verbose:
             print(f"After initial cleanup: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
             
@@ -166,7 +165,6 @@ def to_glb(
         mesh.remove_duplicate_faces()
         mesh.repair_non_manifold_edges()
         mesh.remove_small_connected_components(1e-5)
-        mesh.fill_holes(max_hole_perimeter=3e-2)
         if verbose:
             print(f"After final cleanup: {mesh.num_vertices} vertices, {mesh.num_faces} faces")
             
