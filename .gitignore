@@ -215,3 +215,4 @@ tmp/profiling/summary_trace_inference_run.txt
 tmp/profiling/summary_inference_run.txt
 diff.txt
 /tmp
+/temp

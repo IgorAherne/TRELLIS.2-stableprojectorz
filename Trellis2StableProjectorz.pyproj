@@ -22,6 +22,9 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Folder Include="api_spz\" />
+    <Folder Include="api_spz\core\" />
+    <Folder Include="api_spz\routes\" />
     <Folder Include="o-voxel\" />
     <Folder Include="o-voxel\assets\" />
     <Folder Include="o-voxel\build\" />
@@ -254,6 +257,7 @@
     <Folder Include="whl\" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="api_spz\routes\layout_generation_3d_panel.txt" />
     <Content Include="o-voxel\assets\overview.webp" />
     <Content Include="o-voxel\build\lib.win-amd64-cpython-311\o_voxel\_C.cp311-win_amd64.pyd" />
     <Content Include="o-voxel\build\temp.win-amd64-cpython-311\Release\src\convert\flexible_dual_grid.obj" />
@@ -2317,6 +2321,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="add_filepath_headers.py" />
+    <Compile Include="api_spz\core\exceptions.py" />
+    <Compile Include="api_spz\core\files-manage.py" />
+    <Compile Include="api_spz\core\models_pydantic.py" />
+    <Compile Include="api_spz\core\state_manage.py" />
+    <Compile Include="api_spz\routes\generation.py" />
+    <Compile Include="api_spz\main_api.py" />
+    <Compile Include="api_spz\__init__.py" />
     <Compile Include="app.py" />
     <Compile Include="example.py" />
     <Compile Include="install.py" />
