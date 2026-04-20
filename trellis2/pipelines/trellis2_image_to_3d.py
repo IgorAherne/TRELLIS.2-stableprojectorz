@@ -444,6 +444,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         torch.cuda.empty_cache()
 
         # Step 3: Extract mesh from decoded features
+        # Cast to fp32 — the edge intersection test (> 0) and sigmoid vertex offsets
+        # are precision-sensitive; fp16 rounding near zero creates stray quads
+        # that appear as vertical line/hair artifacts in the mesh.
+        h = h.replace(h.feats.float())
         voxel_margin = decoder.voxel_margin
         vertices = h.replace((1 + 2 * voxel_margin) * torch.sigmoid(h.feats[..., 0:3]) - voxel_margin)
         intersected = h.replace(h.feats[..., 3:6] > 0)
