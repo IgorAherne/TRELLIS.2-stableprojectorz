@@ -178,6 +178,9 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
             # Simplify to nvdiffrast limit before GLB export
             mesh.simplify(16777216)
 
+            # Convert attrs from fp16 to fp32 for GLB texture baking (grid_sample_3d requires matching dtypes)
+            mesh.attrs = mesh.attrs.float()
+
             # Export to GLB via o_voxel (remeshing + texture baking)
             glb = o_voxel.postprocess.to_glb(
                 vertices=mesh.vertices,
@@ -196,7 +199,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
             )
 
             model_path = file_manager.get_temp_path("model.glb")
-            glb.export(str(model_path), extension_webp=True)
+            glb.export(str(model_path))
 
             logger.info(f"GLB exported to {model_path}")
 
@@ -351,11 +354,19 @@ async def generate_multi_no_preview(
 async def process_ui_generation_request(data: Dict):
     """Process generation request from the StableProjectorz UI panel."""
     try:
+        RESOLUTION_OPTIONS = [512, 1024, 1536]
+        raw_resolution = int(data["resolution"])
+        # Dropdown sends the selected index (0, 1, 2), not the option text
+        if raw_resolution < len(RESOLUTION_OPTIONS):
+            resolution = RESOLUTION_OPTIONS[raw_resolution]
+        else:
+            resolution = raw_resolution
+
         arg = GenerationArgForm(
             seed=int(data["seed"]),
             guidance_scale=float(data["guidance_scale"]),
             num_inference_steps=int(data["num_inference_steps"]),
-            resolution=int(data["resolution"]),
+            resolution=resolution,
             mesh_simplify=int(data["mesh_simplify"]),
             apply_texture=data["apply_texture"],
             texture_size=2048,

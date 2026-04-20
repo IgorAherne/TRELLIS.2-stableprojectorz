@@ -4,7 +4,7 @@ vgroup padl=4 padr=4 spacing=8 flexibleWidth=1
 
     single_multi_img_input  code_name=(single_multi_img_input)  visible_name=(single_multi_img_input)  content_min_num_needed=(make_meshes_and_tex:1 )
 
-    header visible_name=(1 image;\nFRONT view) color=(255,255,255,255)
+    header visible_name=(max 1 image:  FRONT view) color=(255,255,255,255)
     
     space minHeight=5
 
