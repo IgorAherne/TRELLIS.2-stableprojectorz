@@ -162,16 +162,43 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
 
             logger.info(f"Starting Trellis 2 generation (seed={arg.seed}, steps={arg.num_inference_steps}, guidance={arg.guidance_scale}, pipeline={arg.pipeline_type})")
 
+
             # Run the full pipeline (shape + texture in one pass)
-            mesh = pipeline.run(
-                image,
-                seed=arg.seed,
-                preprocess_image=True,
-                sparse_structure_sampler_params=ss_params,
-                shape_slat_sampler_params=shape_params,
-                tex_slat_sampler_params=tex_params,
-                pipeline_type=arg.pipeline_type,
-            )[0]
+            import os
+            _cache_path = file_manager.get_temp_path("_debug_mesh_cache.pt")
+            if os.path.exists(_cache_path):
+                logger.info("Loading cached mesh (delete temp/_debug_mesh_cache.pt to regenerate)")
+                _cached = torch.load(_cache_path, weights_only=False)
+                from trellis2.representations import MeshWithVoxel
+                mesh = MeshWithVoxel(
+                    _cached['vertices'].cuda(), _cached['faces'].cuda(),
+                    _cached['origin'], _cached['voxel_size'],
+                    _cached['coords'].cuda(), _cached['attrs'].cuda(),
+                    _cached['voxel_shape'], _cached['layout'],
+                )
+                del _cached
+            else:
+                mesh = pipeline.run(
+                    image,
+                    seed=arg.seed,
+                    preprocess_image=True,
+                    sparse_structure_sampler_params=ss_params,
+                    shape_slat_sampler_params=shape_params,
+                    tex_slat_sampler_params=tex_params,
+                    pipeline_type=arg.pipeline_type,
+                )[0]
+                torch.save({
+                    'vertices': mesh.vertices.cpu(),
+                    'faces': mesh.faces.cpu(),
+                    'coords': mesh.coords.cpu(),
+                    'attrs': mesh.attrs.cpu(),
+                    'voxel_shape': mesh.voxel_shape,
+                    'origin': mesh.origin.tolist(),
+                    'voxel_size': mesh.voxel_size,
+                    'layout': mesh.layout,
+                }, _cache_path)
+                logger.info(f"Mesh cached to {_cache_path}")
+
 
             logger.info("Pipeline generation complete, exporting to GLB...")
 
@@ -180,8 +207,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
             # during remeshing (from ~4GB peak to ~500MB)
             mesh.simplify(2000000)
 
-            # Convert attrs from fp16 to fp32 for GLB texture baking (grid_sample_3d requires matching dtypes)
-            mesh.attrs = mesh.attrs.float()
+            # attrs stay fp16 — converted to fp32 at texture baking time in postprocess
 
             # Export to GLB via o_voxel (remeshing + texture baking)
             glb = o_voxel.postprocess.to_glb(

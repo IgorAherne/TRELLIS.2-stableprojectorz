@@ -539,6 +539,10 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         """
         from trellis2.modules.sparse.conv import conv_flex_gemm
 
+        # Offload tex_slat to CPU during shape decoding — not needed until texture phase
+        tex_slat = tex_slat.to('cpu')
+        torch.cuda.empty_cache()
+
         # 1. Load shape decoder, run, and clear
         shape_dec = self.models['shape_slat_decoder']
         if shape_dec.dtype != torch.float16:
@@ -562,6 +566,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             m.vertices = m.vertices.cpu()
             m.faces = m.faces.cpu()
         torch.cuda.empty_cache()
+
+        # Reload tex_slat for texture decoding
+        tex_slat = tex_slat.to(self.device)
 
         # 2. Load texture decoder, run, and clear
         tex_dec = self.models['tex_slat_decoder']
@@ -710,8 +717,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             )
             # cond_512 is no longer needed after shape cascade
             del cond_512
+            shape_slat._spatial_cache = {}
             torch.cuda.empty_cache()
-            
+
             tex_slat = self.sample_tex_slat(
                 cond_1024, self.models['tex_slat_flow_model_1024'],
                 shape_slat, tex_slat_sampler_params
@@ -729,8 +737,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             )
             # cond_512 is no longer needed after shape cascade
             del cond_512
+            shape_slat._spatial_cache = {}
             torch.cuda.empty_cache()
-            
+
             tex_slat = self.sample_tex_slat(
                 cond_1024, self.models['tex_slat_flow_model_1024'],
                 shape_slat, tex_slat_sampler_params

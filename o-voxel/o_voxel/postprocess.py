@@ -175,6 +175,13 @@ def to_glb(
         center = aabb.mean(dim=0)
         scale = (aabb[1] - aabb[0]).max().item()
         resolution = grid_size.max().item()
+
+        # Cap DC grid resolution to control peak VRAM during remeshing.
+        # DC resolution only affects the intermediate mesh shell density — the
+        # texture is baked from attr_volume at full voxel resolution regardless.
+        # At 1024 DC produces ~41M faces only to simplify to ~200K (99.5% waste).
+        # At 512 DC produces ~10M — still 50x the target — saving ~2-3GB VRAM.
+        dc_resolution = min(int(resolution), 512)
         
         # Free CuMesh internal buffers before the heavy remesh allocation —
         # vertices/faces are still held separately for BVH texture baking later
@@ -185,8 +192,8 @@ def to_glb(
         remesh_verts, remesh_faces = cumesh.remeshing.remesh_narrow_band_dc(
             vertices, faces,
             center = center,
-            scale = (resolution + 3 * remesh_band) / resolution * scale,
-            resolution = resolution,
+            scale = (dc_resolution + 3 * remesh_band) / dc_resolution * scale,
+            resolution = dc_resolution,
             band = remesh_band,
             project_back = remesh_project, # Snaps vertices back to original surface
             verbose = verbose,
@@ -318,7 +325,7 @@ def to_glb(
     torch.cuda.empty_cache()
     
     # Reload attr_volume and coords from CPU for texture sampling
-    attr_volume = attr_volume_cpu.cuda()
+    attr_volume = attr_volume_cpu.float().cuda()
     coords = coords_cpu.cuda()
     del attr_volume_cpu, coords_cpu
     
