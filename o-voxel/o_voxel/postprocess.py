@@ -270,6 +270,7 @@ def to_glb(
     out_uvs = out_uvs.cuda()
     out_vmaps = out_vmaps.cuda()
     mesh.compute_vertex_normals()
+    out_normals = mesh.read_vertex_normals()[out_vmaps]
     # Free CuMesh internal C++ CUDA buffers — no longer needed after normals
     del mesh
     torch.cuda.empty_cache()
@@ -338,7 +339,7 @@ def to_glb(
     del attr_volume_cpu, coords_cpu
     
     # Trilinear sampling from the attribute volume (Color, Material props)
-    attrs = torch.zeros(texture_size, texture_size, attr_volume.shape[1], device='cuda')
+    attrs = torch.zeros(texture_size, texture_size, attr_volume.shape[1], device='cuda', dtype=attr_volume.dtype)
     attrs[mask] = grid_sample_3d(
         attr_volume,
         torch.cat([torch.zeros_like(coords[:, :1]), coords], dim=-1),

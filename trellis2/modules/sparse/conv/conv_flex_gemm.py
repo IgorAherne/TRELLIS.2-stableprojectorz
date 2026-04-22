@@ -1,5 +1,6 @@
 # File: trellis2/modules/sparse/conv/conv_flex_gemm.py
 # trellis2/modules/sparse/conv/conv_flex_gemm.py
+import os
 import math
 import torch
 import torch.nn as nn
@@ -47,7 +48,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     _nb = N * V * 4
     _ob = N * Co * x.feats.element_size()
     torch.cuda.synchronize()
-    if config.DEBUG:
+    if os.environ.get('SPARSE_DEBUG') == '1':
         print(f"[CONV] N={N} Ci={Ci} Co={Co} neighbor_map={_nb/1024/1024:.0f}MB offload_out={_ob >= 256*1024*1024} feats_bytes={x.feats.numel()*x.feats.element_size()/1024/1024:.0f}MB")
     neighbor_cache_key = f'SubMConv3d_neighbor_cache_{Kw}x{Kh}x{Kd}_dilation{self.dilation}'
     neighbor_cache = x.get_spatial_cache(neighbor_cache_key)
