@@ -268,7 +268,9 @@ def to_glb(
     out_uvs = out_uvs.cuda()
     out_vmaps = out_vmaps.cuda()
     mesh.compute_vertex_normals()
-    out_normals = mesh.read_vertex_normals()[out_vmaps]
+    # Free CuMesh internal C++ CUDA buffers — no longer needed after normals
+    del mesh
+    torch.cuda.empty_cache()
     
     if use_tqdm:
         pbar.update(1)
@@ -304,6 +306,10 @@ def to_glb(
     pos = dr.interpolate(out_vertices.unsqueeze(0), rast, out_faces)[0][0]
     valid_pos = pos[mask]
     
+    # Free rasterization intermediates — only mask and valid_pos needed from here
+    del rast, pos, uvs_rast, ctx
+    torch.cuda.empty_cache()
+    
     # Map these positions back to the *original* high-res mesh to get accurate attributes
     # This corrects geometric errors introduced by simplification/remeshing
     if _mesh_offloaded:
@@ -325,7 +331,7 @@ def to_glb(
     torch.cuda.empty_cache()
     
     # Reload attr_volume and coords from CPU for texture sampling
-    attr_volume = attr_volume_cpu.float().cuda()
+    attr_volume = attr_volume_cpu.cuda()
     coords = coords_cpu.cuda()
     del attr_volume_cpu, coords_cpu
     

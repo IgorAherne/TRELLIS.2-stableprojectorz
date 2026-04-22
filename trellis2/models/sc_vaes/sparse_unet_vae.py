@@ -275,6 +275,7 @@ class SparseResBlockC2S3d(nn.Module):
             self.to_subdiv = sp.SparseLinear(channels, 8)
         self.updown = sp.SparseChannel2Spatial(2)
 
+
     def _forward(self, x: sp.SparseTensor, subdiv: sp.SparseTensor = None) -> sp.SparseTensor:
         if self.pred_subdiv:
             subdiv = self.to_subdiv(x)
@@ -292,11 +293,30 @@ class SparseResBlockC2S3d(nn.Module):
             torch.cuda.empty_cache()
         else:
             skip_feats_cpu = None
-        h = h.replace(self.norm2(h.feats))
-        h = h.replace(F.silu(h.feats))
+        # Chunked in-place norm2 + silu to avoid 2× h.feats peak.
+        # At 10.7M×64ch×fp16 = 1310MB, the full-tensor norm creates a 2620MB
+        # peak that leaves ~1.3GB of dead fragments in the CUDA reserved pool.
+        _large_h = not self.training and h.feats.numel() * h.feats.element_size() > 128 * 1024 * 1024
+        if _large_h:
+            _CHUNK = 200_000
+            for s in range(0, h.feats.shape[0], _CHUNK):
+                e = min(s + _CHUNK, h.feats.shape[0])
+                h.feats[s:e] = F.silu(self.norm2(h.feats[s:e]))
+        else:
+            h = h.replace(self.norm2(h.feats))
+            h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
+        # Defragment: conv2's internal bouncing (1105MB neighbor_map build,
+        # 1310MB feats reload, 552 × 65MB im2col chunks) leaves ~2GB of dead
+        # reserved fragments.  CPU-bounce compacts the pool before skip addition.
+        if _large_h:
+            _h_cpu = h.feats.cpu()
+            h.feats = torch.empty(0, dtype=_h_cpu.dtype, device='cpu')
+            torch.cuda.empty_cache()
+            h = h.replace(_h_cpu.cuda())
+            del _h_cpu
         if skip_feats_cpu is not None:
-            SKIP_CHUNK = 1_000_000
+            SKIP_CHUNK = 200_000
             for s in range(0, h.feats.shape[0], SKIP_CHUNK):
                 e = min(s + SKIP_CHUNK, h.feats.shape[0])
                 h.feats[s:e] += skip_feats_cpu[s:e].to(h.feats.device)
@@ -347,26 +367,33 @@ class SparseConvNeXtBlock3d(nn.Module):
         else:
             x_feats_cpu = None
         h = self.conv(x)
-        if x_feats_cpu is not None and x.feats.numel() > 0:
-            x.feats = torch.empty(0, device='cpu')
+        if x_feats_cpu is not None:
+            # Reclaim reserved blocks from conv before norm/MLP allocations.
+            # The chunked im2col + GEMM loop fragments the CUDA pool; without
+            # this call, reserved stays ~4GB even though allocated is ~500MB.
+            # Must be unconditional — conv's offload path may have already
+            # zeroed x.feats (numel()==0), but the im2col fragments remain.
+            if x.feats.numel() > 0:
+                x.feats = torch.empty(0, device='cpu')
             torch.cuda.empty_cache()
         # Chunked norm to avoid 2× feats peak
         if _large:
-            LN_CHUNK = 1_000_000
+            LN_CHUNK = 200_000
             for s in range(0, h.feats.shape[0], LN_CHUNK):
                 e = min(s + LN_CHUNK, h.feats.shape[0])
                 h.feats[s:e] = self.norm(h.feats[s:e])
         else:
             h = h.replace(self.norm(h.feats))
-        # Chunk the MLP — the 4x channel expansion creates massive intermediates
+        # Chunk the MLP in-place — the 4× channel expansion creates massive
+        # intermediates.  200K rows keeps the expansion buffer under ~400MB
+        # (vs 1.33GB unchunked at level 2 where 647K < old 1M chunk = no chunking).
+        # Writing in-place to h.feats eliminates the full-size out_feats
+        # pre-allocation (~316MB at level 2, ~651MB at level 3).
         if _large:
-            MLP_CHUNK = 1_000_000
-            out_feats = torch.empty_like(h.feats)
+            MLP_CHUNK = 200_000
             for s in range(0, h.feats.shape[0], MLP_CHUNK):
                 e = min(s + MLP_CHUNK, h.feats.shape[0])
-                out_feats[s:e] = self.mlp(h.feats[s:e])
-            h = h.replace(out_feats)
-            del out_feats
+                h.feats[s:e] = self.mlp(h.feats[s:e])
         else:
             h = h.replace(self.mlp(h.feats))
         if x_feats_cpu is not None:

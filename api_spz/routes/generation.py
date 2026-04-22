@@ -222,7 +222,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                     pipeline_type=arg.pipeline_type,
                     return_before_decode=True,
                 )
-                # Save latent cache — allows replaying just the decode phase
+                # Save latent cache ï¿½ allows replaying just the decode phase
                 torch.save({
                     'shape_feats': shape_slat.feats.cpu(),
                     'shape_coords': shape_slat.coords.cpu(),
@@ -250,21 +250,33 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
 
             logger.info("Pipeline generation complete, exporting to GLB...")
 
-            # Simplify before GLB export — 2M faces is sufficient for BVH texture
-            # baking accuracy at 2048 texture size, and drastically reduces VRAM
-            # during remeshing (from ~4GB peak to ~500MB)
-            mesh.simplify(2000000)
+            # Pre-simplify only when the extracted mesh exceeds BVH budget.
+            # Skip if already under target â€” avoids CuMesh allocation overhead
+            # (200-400MB of C++ CUDA memory for internal buffers).
+            if mesh.faces.shape[0] > 2000000:
+                mesh.simplify(2000000)
 
-            # attrs stay fp16 — converted to fp32 at texture baking time in postprocess
+            # Detach all data from mesh so to_glb's internal
+            # `del attr_volume, coords` actually frees GPU memory.
+            # Without this, mesh.attrs / mesh.coords keep GPU refs alive
+            # throughout all of to_glb (~256MB leaked).
+            _vertices = mesh.vertices
+            _faces = mesh.faces
+            _attr_volume = mesh.attrs
+            _coords = mesh.coords
+            _layout = mesh.layout
+            _voxel_size = mesh.voxel_size
+            del mesh
+            torch.cuda.empty_cache()
 
             # Export to GLB via o_voxel (remeshing + texture baking)
             glb = o_voxel.postprocess.to_glb(
-                vertices=mesh.vertices,
-                faces=mesh.faces,
-                attr_volume=mesh.attrs,
-                coords=mesh.coords,
-                attr_layout=mesh.layout,
-                voxel_size=mesh.voxel_size,
+                vertices=_vertices,
+                faces=_faces,
+                attr_volume=_attr_volume,
+                coords=_coords,
+                attr_layout=_layout,
+                voxel_size=_voxel_size,
                 aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                 decimation_target=arg.decimation_target,
                 texture_size=arg.texture_size,
@@ -279,7 +291,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
 
             logger.info(f"GLB exported to {model_path}")
 
-            del mesh, glb
+            del glb
             torch.cuda.empty_cache()
 
             return model_path
@@ -395,7 +407,7 @@ async def generate_multi_no_preview(
         _validate_params(file_list or image_list_base64, arg)
         images = await _load_images_into_list(file_list, image_list_base64)
 
-        # Trellis 2 uses a single image — take the first one
+        # Trellis 2 uses a single image ï¿½ take the first one
         image = images[0]
 
         update_current_generation(status=TaskStatus.PROCESSING, progress=10, message="Generating 3D mesh and texture...")
@@ -466,7 +478,7 @@ async def process_ui_generation_request(data: Dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# "make_meshes_and_tex" — Trellis 2 always generates mesh with texture
+# "make_meshes_and_tex" ï¿½ Trellis 2 always generates mesh with texture
 @router.get("/info/supported_operations")
 async def get_supported_operation_types():
     return ["make_meshes_and_tex"]
