@@ -22,6 +22,8 @@ class GenerationArgForm:
         mesh_simplify: int = Form(50),
         apply_texture: bool = Form(True),
         texture_size: int = Form(2048),
+        tex_rescale_t: float = Form(3.0),
+        tex_guidance_strength: float = Form(1.0),
         output_format: str = Form("glb"),
     ):
         self.seed = seed
@@ -31,6 +33,8 @@ class GenerationArgForm:
         self.decimation_target = mesh_simplify * 1000
         self.apply_texture = apply_texture
         self.texture_size = texture_size
+        self.tex_rescale_t = tex_rescale_t
+        self.tex_guidance_strength = tex_guidance_strength
         self.output_format = output_format
         # Snap resolution to nearest valid value and map to pipeline_type
         if resolution <= 768:

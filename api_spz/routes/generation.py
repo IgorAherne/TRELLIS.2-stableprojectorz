@@ -25,6 +25,9 @@ from api_spz.core.models_pydantic import (
     StatusResponse
 )
 
+# Set True to enable saving/loading debug .pt caches (latent + mesh).
+# Useful for iterating on decode/postprocess without re-running sampling.
+DEBUG_USE_CACHE = False
 
 router = APIRouter()
 
@@ -155,9 +158,9 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
             }
             tex_params = {
                 "steps": arg.num_inference_steps,
-                "guidance_strength": 1.0,
-                "guidance_rescale": 0.0,
-                "rescale_t": 3.0,
+                "guidance_strength": arg.tex_guidance_strength,
+                "guidance_rescale": 0.5 if arg.tex_guidance_strength > 1.0 else 0.0,
+                "rescale_t": arg.tex_rescale_t,
             }
 
             logger.info(f"Starting Trellis 2 generation (seed={arg.seed}, steps={arg.num_inference_steps}, guidance={arg.guidance_scale}, pipeline={arg.pipeline_type})")
@@ -169,7 +172,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
             _mesh_cache_path = file_manager.get_temp_path("_debug_mesh_cache.pt")
             _latent_cache_path = file_manager.get_temp_path("_debug_latent_cache.pt")
 
-            if os.path.exists(_mesh_cache_path):
+            if DEBUG_USE_CACHE and os.path.exists(_mesh_cache_path):
                 logger.info("Loading cached mesh (delete temp/_debug_mesh_cache.pt to regenerate)")
                 _cached = torch.load(_mesh_cache_path, weights_only=False)
                 from trellis2.representations import MeshWithVoxel
@@ -181,7 +184,7 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                 )
                 del _cached
 
-            elif os.path.exists(_latent_cache_path):
+            elif DEBUG_USE_CACHE and os.path.exists(_latent_cache_path):
                 logger.info("Loading cached latents (delete temp/_debug_latent_cache.pt to re-sample)")
                 _cached = torch.load(_latent_cache_path, weights_only=False)
                 shape_slat = SparseTensor(
@@ -228,15 +231,16 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                     pipeline_type=arg.pipeline_type,
                     return_before_decode=True,
                 )
-                # Save latent cache � allows replaying just the decode phase
-                torch.save({
-                    'shape_feats': shape_slat.feats.cpu(),
-                    'shape_coords': shape_slat.coords.cpu(),
-                    'tex_feats': tex_slat.feats.cpu(),
-                    'tex_coords': tex_slat.coords.cpu(),
-                    'resolution': res,
-                }, _latent_cache_path)
-                logger.info(f"Latents cached to {_latent_cache_path}")
+                # Save latent cache — allows replaying just the decode phase
+                if DEBUG_USE_CACHE:
+                    torch.save({
+                        'shape_feats': shape_slat.feats.cpu(),
+                        'shape_coords': shape_slat.coords.cpu(),
+                        'tex_feats': tex_slat.feats.cpu(),
+                        'tex_coords': tex_slat.coords.cpu(),
+                        'resolution': res,
+                    }, _latent_cache_path)
+                    logger.info(f"Latents cached to {_latent_cache_path}")
 
                 mesh = pipeline.decode_and_cleanup(shape_slat, tex_slat, res)[0]
                 del shape_slat, tex_slat
@@ -247,17 +251,18 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                 mesh.attrs = mesh.attrs.cpu()
                 mesh.coords = mesh.coords.cpu()
                 torch.cuda.empty_cache()
-                torch.save({
-                    'vertices': mesh.vertices.cpu(),
-                    'faces': mesh.faces.cpu(),
-                    'coords': mesh.coords,
-                    'attrs': mesh.attrs,
-                    'voxel_shape': mesh.voxel_shape,
-                    'origin': mesh.origin.tolist(),
-                    'voxel_size': mesh.voxel_size,
-                    'layout': mesh.layout,
-                }, _mesh_cache_path)
-                logger.info(f"Mesh cached to {_mesh_cache_path}")
+                if DEBUG_USE_CACHE:
+                    torch.save({
+                        'vertices': mesh.vertices.cpu(),
+                        'faces': mesh.faces.cpu(),
+                        'coords': mesh.coords,
+                        'attrs': mesh.attrs,
+                        'voxel_shape': mesh.voxel_shape,
+                        'origin': mesh.origin.tolist(),
+                        'voxel_size': mesh.voxel_size,
+                        'layout': mesh.layout,
+                    }, _mesh_cache_path)
+                    logger.info(f"Mesh cached to {_mesh_cache_path}")
 
 
             logger.info("Pipeline generation complete, exporting to GLB...")
@@ -419,7 +424,7 @@ async def generate_multi_no_preview(
         _validate_params(file_list or image_list_base64, arg)
         images = await _load_images_into_list(file_list, image_list_base64)
 
-        # Trellis 2 uses a single image � take the first one
+        # Trellis 2 uses a single image - take the first one
         image = images[0]
 
         update_current_generation(status=TaskStatus.PROCESSING, progress=10, message="Generating 3D mesh and texture...")
@@ -470,6 +475,8 @@ async def process_ui_generation_request(data: Dict):
             mesh_simplify=int(data["mesh_simplify"]),
             apply_texture=data["apply_texture"],
             texture_size=2048,
+            tex_rescale_t=float(data.get("tex_rescale_t", 3.0)),
+            tex_guidance_strength=float(data.get("tex_guidance_strength", 1.0)),
             output_format="glb",
         )
         images_base64 = data["single_multi_img_input"]
@@ -490,7 +497,7 @@ async def process_ui_generation_request(data: Dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# "make_meshes_and_tex" � Trellis 2 always generates mesh with texture
+# "make_meshes_and_tex" - Trellis 2 always generates mesh with texture
 @router.get("/info/supported_operations")
 async def get_supported_operation_types():
     return ["make_meshes_and_tex"]
