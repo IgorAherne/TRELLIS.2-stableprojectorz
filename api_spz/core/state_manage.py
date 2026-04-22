@@ -71,6 +71,7 @@ class TrellisState:
         os.environ["TORCHDYNAMO_DISABLE"] = "1"
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "garbage_collection_threshold:0.65"
         os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
+        os.environ.setdefault('SPARSE_DEBUG', '0')
 
         _apply_patches()
 

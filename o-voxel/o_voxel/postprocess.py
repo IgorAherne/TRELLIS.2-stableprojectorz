@@ -1,5 +1,6 @@
 # File: o-voxel/o_voxel/postprocess.py
 # o-voxel/o_voxel/postprocess.py
+import os
 from typing import *
 from tqdm import tqdm
 import numpy as np
@@ -63,7 +64,7 @@ def to_glb(
     if isinstance(aabb, (list, tuple)):
         aabb = np.array(aabb)
     if isinstance(aabb, np.ndarray):
-        aabb = torch.tensor(aabb, dtype=torch.float32, device=coords.device)
+        aabb = torch.tensor(aabb, dtype=torch.float32, device='cuda')
     assert isinstance(aabb, torch.Tensor), f"aabb must be a list, tuple, np.ndarray, or torch.Tensor, but got {type(aabb)}"
     assert aabb.dim() == 2, f"aabb must be a 2D tensor, but got {aabb.shape}"
     assert aabb.size(0) == 2, f"aabb must have 2 rows, but got {aabb.size(0)}"
@@ -76,7 +77,7 @@ def to_glb(
         if isinstance(voxel_size, (list, tuple)):
             voxel_size = np.array(voxel_size)
         if isinstance(voxel_size, np.ndarray):
-            voxel_size = torch.tensor(voxel_size, dtype=torch.float32, device=coords.device)
+            voxel_size = torch.tensor(voxel_size, dtype=torch.float32, device='cuda')
         grid_size = ((aabb[1] - aabb[0]) / voxel_size).round().int()
     else:
         assert grid_size is not None, "Either voxel_size or grid_size must be provided"
@@ -138,8 +139,9 @@ def to_glb(
         print("Cleaning mesh...")
     
     # DIAGNOSTIC: What's on GPU right now?
-    print(f"[DIAG] vertices: {vertices.shape}, faces: {faces.shape}, device={vertices.device}")
-    print(f"[DIAG] VRAM allocated: {torch.cuda.memory_allocated()/(1024**2):.0f}MB, reserved: {torch.cuda.memory_reserved()/(1024**2):.0f}MB")
+    if os.environ.get('SPARSE_DEBUG') == '1':
+        print(f"[DIAG] vertices: {vertices.shape}, faces: {faces.shape}, device={vertices.device}")
+        print(f"[DIAG] VRAM allocated: {torch.cuda.memory_allocated()/(1024**2):.0f}MB, reserved: {torch.cuda.memory_reserved()/(1024**2):.0f}MB")
     
     # --- Branch 1: Standard Pipeline (Simplification & Cleaning) ---
     if not remesh:

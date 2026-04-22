@@ -47,7 +47,8 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     _nb = N * V * 4
     _ob = N * Co * x.feats.element_size()
     torch.cuda.synchronize()
-    print(f"[CONV] N={N} Ci={Ci} Co={Co} neighbor_map={_nb/1024/1024:.0f}MB offload_out={_ob >= 256*1024*1024} feats_bytes={x.feats.numel()*x.feats.element_size()/1024/1024:.0f}MB")
+    if config.DEBUG:
+        print(f"[CONV] N={N} Ci={Ci} Co={Co} neighbor_map={_nb/1024/1024:.0f}MB offload_out={_ob >= 256*1024*1024} feats_bytes={x.feats.numel()*x.feats.element_size()/1024/1024:.0f}MB")
     neighbor_cache_key = f'SubMConv3d_neighbor_cache_{Kw}x{Kh}x{Kd}_dilation{self.dilation}'
     neighbor_cache = x.get_spatial_cache(neighbor_cache_key)
 

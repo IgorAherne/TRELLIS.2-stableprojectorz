@@ -506,7 +506,7 @@ def create_input_panel():
         resolution = gr.Radio(["512", "1024", "1536"], label="Resolution", value="1024")
         seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
         randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-        decimation_target = gr.Slider(10000, 1000000, label="Decimation Target", value=200000, step=10000)
+        decimation_target = gr.Slider(10000, 1000000, label="Decimation Target", value=250000, step=10000)
         texture_size = gr.Slider(1024, 4096, label="Texture Size", value=2048, step=1024)
         
         generate_btn = gr.Button("Generate")

@@ -296,7 +296,7 @@ class SparseResBlockC2S3d(nn.Module):
         # Chunked in-place norm2 + silu to avoid 2× h.feats peak.
         # At 10.7M×64ch×fp16 = 1310MB, the full-tensor norm creates a 2620MB
         # peak that leaves ~1.3GB of dead fragments in the CUDA reserved pool.
-        _large_h = not self.training and h.feats.numel() * h.feats.element_size() > 128 * 1024 * 1024
+        _large_h = not self.training and h.feats.numel() * h.feats.element_size() > 256 * 1024 * 1024
         if _large_h:
             _CHUNK = 200_000
             for s in range(0, h.feats.shape[0], _CHUNK):
@@ -358,7 +358,7 @@ class SparseConvNeXtBlock3d(nn.Module):
     def _forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
         # Byte-based threshold for all offload/chunking decisions.
         # At 647K×256ch the MLP 4x expansion is 1.33GB — must be chunked.
-        _OFFLOAD_BYTES = 128 * 1024 * 1024
+        _OFFLOAD_BYTES = 256 * 1024 * 1024
         _feats_bytes = x.feats.numel() * x.feats.element_size()
         _large = not self.training and _feats_bytes > _OFFLOAD_BYTES
         # Save skip BEFORE conv — conv may free x.feats for large outputs
@@ -622,7 +622,7 @@ class SparseUnetVaeDecoder(nn.Module):
                         h = block(h, subdiv=guide_subs[i] if guide_subs is not None else None)
                 else:
                     h = block(h)
-                if i >= 2:
+                if sp.config.DEBUG and i >= 2:
                     torch.cuda.synchronize()
                     a = torch.cuda.memory_allocated() / 1024**2
                     r = torch.cuda.memory_reserved() / 1024**2
@@ -632,10 +632,11 @@ class SparseUnetVaeDecoder(nn.Module):
             h._spatial_cache.clear()
             torch.cuda.empty_cache()
 
-            torch.cuda.synchronize()
-            a = torch.cuda.memory_allocated() / 1024**2
-            r = torch.cuda.memory_reserved() / 1024**2
-            print(f"[VRAM] decoder level {i} done: alloc={a:.0f}MB  reserved={r:.0f}MB  voxels={h.feats.shape[0]}  channels={h.feats.shape[1]}")
+            if sp.config.DEBUG:
+                torch.cuda.synchronize()
+                a = torch.cuda.memory_allocated() / 1024**2
+                r = torch.cuda.memory_reserved() / 1024**2
+                print(f"[VRAM] decoder level {i} done: alloc={a:.0f}MB  reserved={r:.0f}MB  voxels={h.feats.shape[0]}  channels={h.feats.shape[1]}")
 
         # Defragment: the reserved pool has ~1.3GB of dead fragments from the
         # decoder levels that empty_cache can't return while h.feats occupies

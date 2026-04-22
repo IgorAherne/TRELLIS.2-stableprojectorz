@@ -198,12 +198,18 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                 mesh = pipeline.decode_and_cleanup(shape_slat, tex_slat, res)[0]
                 del shape_slat, tex_slat
                 torch.cuda.empty_cache()
+                # Offload attrs/coords to CPU once — reused for both cache save
+                # and to_glb (which needs them on CPU anyway).  Avoids a second
+                # 256MB GPU→CPU copy inside to_glb.
+                mesh.attrs = mesh.attrs.cpu()
+                mesh.coords = mesh.coords.cpu()
+                torch.cuda.empty_cache()
                 # Save mesh cache so next run skips decode too
                 torch.save({
                     'vertices': mesh.vertices.cpu(),
                     'faces': mesh.faces.cpu(),
-                    'coords': mesh.coords.cpu(),
-                    'attrs': mesh.attrs.cpu(),
+                    'coords': mesh.coords,
+                    'attrs': mesh.attrs,
                     'voxel_shape': mesh.voxel_shape,
                     'origin': mesh.origin.tolist(),
                     'voxel_size': mesh.voxel_size,
@@ -235,11 +241,17 @@ async def _run_pipeline_generate_and_export(image: Image.Image, arg: GenerationA
                 mesh = pipeline.decode_and_cleanup(shape_slat, tex_slat, res)[0]
                 del shape_slat, tex_slat
                 torch.cuda.empty_cache()
+                # Offload attrs/coords to CPU once — reused for both cache save
+                # and to_glb (which needs them on CPU anyway).  Avoids a second
+                # 256MB GPU→CPU copy inside to_glb.
+                mesh.attrs = mesh.attrs.cpu()
+                mesh.coords = mesh.coords.cpu()
+                torch.cuda.empty_cache()
                 torch.save({
                     'vertices': mesh.vertices.cpu(),
                     'faces': mesh.faces.cpu(),
-                    'coords': mesh.coords.cpu(),
-                    'attrs': mesh.attrs.cpu(),
+                    'coords': mesh.coords,
+                    'attrs': mesh.attrs,
                     'voxel_shape': mesh.voxel_shape,
                     'origin': mesh.origin.tolist(),
                     'voxel_size': mesh.voxel_size,

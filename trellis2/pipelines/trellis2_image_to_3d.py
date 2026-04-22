@@ -1,5 +1,6 @@
 # File: trellis2/pipelines/trellis2_image_to_3d.py
 # trellis2/pipelines/trellis2_image_to_3d.py
+import os
 from typing import *
 import torch
 import torch.nn as nn
@@ -442,8 +443,9 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         # .clear() modifies it in-place so ALL references release GPU tensors.
         h._spatial_cache.clear()
 
-        torch.cuda.synchronize()
-        print(f"[VRAM] after shape decoder forward + cache clear: alloc={torch.cuda.memory_allocated()/1024**2:.0f}MB  reserved={torch.cuda.memory_reserved()/1024**2:.0f}MB")
+        if os.environ.get('SPARSE_DEBUG') == '1':
+            torch.cuda.synchronize()
+            print(f"[VRAM] after shape decoder forward + cache clear: alloc={torch.cuda.memory_allocated()/1024**2:.0f}MB  reserved={torch.cuda.memory_reserved()/1024**2:.0f}MB")
 
         # Step 2: Free decoder weights before mesh extraction
         if self.low_vram:
@@ -546,7 +548,11 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         """
         from trellis2.modules.sparse.conv import conv_flex_gemm
 
+        import os
+        _vram_debug = os.environ.get('SPARSE_DEBUG') == '1'
         def _vram(label):
+            if not _vram_debug:
+                return
             torch.cuda.synchronize()
             a = torch.cuda.memory_allocated() / 1024**2
             r = torch.cuda.memory_reserved() / 1024**2

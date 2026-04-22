@@ -26,7 +26,7 @@ vgroup padl=4 padr=4 spacing=8 flexibleWidth=1
         hgroup spacing=8 
             hgroup bg.color=(255,255,255,10) bg.ppu=10 flexibleWidth=1 
                 space minWidth=20  flexibleHeight=1  flexibleWidth=1
-                slider  code_name=(mesh_simplify)  visible_name=(mesh\nfaces (k))  min=10  max=1000  default=200  show_n_decimals=0  flexibleHeight=1 minWidth=60 preferredWidth=60
+                slider  code_name=(mesh_simplify)  visible_name=(mesh\nfaces (k))  min=10  max=1000  default=250  show_n_decimals=0  flexibleHeight=1 minWidth=60 preferredWidth=60
                 space  minWidth=20  preferredWidth=30  flexibleHeight=1
 
             hgroup bg.color=(255,255,255,10), bg.ppu=10  preferredHeight=60  minWidth=140  preferredWidth=140  padl=10 padt=10
