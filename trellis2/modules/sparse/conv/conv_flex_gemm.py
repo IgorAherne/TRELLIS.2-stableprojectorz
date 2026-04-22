@@ -43,6 +43,11 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
 
     Co, Kd, Kh, Kw, Ci = self.weight.shape
     V = Kd * Kh * Kw
+    N = x.feats.shape[0]
+    _nb = N * V * 4
+    _ob = N * Co * x.feats.element_size()
+    torch.cuda.synchronize()
+    print(f"[CONV] N={N} Ci={Ci} Co={Co} neighbor_map={_nb/1024/1024:.0f}MB offload_out={_ob >= 256*1024*1024} feats_bytes={x.feats.numel()*x.feats.element_size()/1024/1024:.0f}MB")
     neighbor_cache_key = f'SubMConv3d_neighbor_cache_{Kw}x{Kh}x{Kd}_dilation{self.dilation}'
     neighbor_cache = x.get_spatial_cache(neighbor_cache_key)
 
@@ -51,7 +56,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
         from flex_gemm.ops.spconv.submanifold_conv3d import SubMConv3dFunction
         neighbor_map_bytes = x.feats.shape[0] * V * 4  # uint32
         if neighbor_map_bytes >= 256 * 1024 * 1024:
-            # Large map — bounce feats to CPU so feats (1.37GB) and
+            # Large map ï¿½ bounce feats to CPU so feats (1.37GB) and
             # neighbor_map (1.16GB) never coexist on GPU during build.
             feats_cpu = x.feats.cpu()
             x.feats = torch.empty(0, dtype=x.feats.dtype, device='cpu')
@@ -93,7 +98,7 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
     CHUNK = max(1024, _cap // im2col_bytes_per_voxel)
 
     # For large outputs, accumulate to CPU so feats + output
-    # never coexist on GPU.  At 10.7M voxels × 64ch × fp16 each is 1.37GB;
+    # never coexist on GPU.  At 10.7M voxels ï¿½ 64ch ï¿½ fp16 each is 1.37GB;
     # overlapping them pushes peak to 3GB.  Writing to CPU keeps peak at ~1.5GB.
     output_bytes = N * Co * feats.element_size()
     offload_output = output_bytes >= 256 * 1024 * 1024

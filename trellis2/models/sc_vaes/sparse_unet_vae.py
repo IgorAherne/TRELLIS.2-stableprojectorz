@@ -75,7 +75,7 @@ class SparseResBlock3d(nn.Module):
             h = self.conv1(h)
         h = self._updown(h, subdiv)
         x = self._updown(x, subdiv)
-        # Compute skip early and offload — frees ~935MB during conv1/conv2
+        # Compute skip early and offload ï¿½ frees ~935MB during conv1/conv2
         skip = self.skip_connection(x)
         if not self.training and skip.feats.numel() > 2_000_000:
             skip_feats_cpu = skip.feats.cpu()
@@ -90,7 +90,10 @@ class SparseResBlock3d(nn.Module):
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
         if skip_feats_cpu is not None:
-            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            SKIP_CHUNK = 1_000_000
+            for s in range(0, h.feats.shape[0], SKIP_CHUNK):
+                e = min(s + SKIP_CHUNK, h.feats.shape[0])
+                h.feats[s:e] += skip_feats_cpu[s:e].to(h.feats.device)
             del skip_feats_cpu
         else:
             h = h + skip
@@ -174,20 +177,27 @@ class SparseResBlockUpsample3d(nn.Module):
         subdiv_binarized = subdiv.replace(subdiv.feats > 0) if subdiv is not None else None
         h = self.updown(h, subdiv_binarized)
         x = self.updown(x, subdiv_binarized)
-        skip = self.skip_connection(x)
-        if not self.training and skip.feats.numel() > 2_000_000:
-            skip_feats_cpu = skip.feats.cpu()
-            del skip
+        # For large tensors, compute skip on CPU so h + x + skip never coexist on GPU.
+        # skip_connection is repeat_interleave â€” safe and fast on CPU.
+        if not self.training and x.feats.numel() > 2_000_000:
+            x_feats_cpu = x.feats.cpu()
             x.feats = torch.empty(0, device='cpu')
             torch.cuda.empty_cache()
+            repeat = self.out_channels // (self.channels // 8)
+            skip_feats_cpu = x_feats_cpu.repeat_interleave(repeat, dim=1)
+            del x_feats_cpu
         else:
+            skip = self.skip_connection(x)
             skip_feats_cpu = None
         h = self.conv1(h)
         h = h.replace(self.norm2(h.feats))
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
         if skip_feats_cpu is not None:
-            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            SKIP_CHUNK = 1_000_000
+            for s in range(0, h.feats.shape[0], SKIP_CHUNK):
+                e = min(s + SKIP_CHUNK, h.feats.shape[0])
+                h.feats[s:e] += skip_feats_cpu[s:e].to(h.feats.device)
             del skip_feats_cpu
         else:
             h = h + skip
@@ -286,7 +296,10 @@ class SparseResBlockC2S3d(nn.Module):
         h = h.replace(F.silu(h.feats))
         h = self.conv2(h)
         if skip_feats_cpu is not None:
-            h = h + h.replace(skip_feats_cpu.to(h.feats.device))
+            SKIP_CHUNK = 1_000_000
+            for s in range(0, h.feats.shape[0], SKIP_CHUNK):
+                e = min(s + SKIP_CHUNK, h.feats.shape[0])
+                h.feats[s:e] += skip_feats_cpu[s:e].to(h.feats.device)
             del skip_feats_cpu
         else:
             h = h + skip
@@ -323,8 +336,13 @@ class SparseConvNeXtBlock3d(nn.Module):
         )
 
     def _forward(self, x: sp.SparseTensor) -> sp.SparseTensor:
-        # Save skip BEFORE conv — conv may free x.feats for large outputs
-        if not self.training and x.feats.numel() > 2_000_000:
+        # Byte-based threshold for all offload/chunking decisions.
+        # At 647KÃ—256ch the MLP 4x expansion is 1.33GB â€” must be chunked.
+        _OFFLOAD_BYTES = 128 * 1024 * 1024
+        _feats_bytes = x.feats.numel() * x.feats.element_size()
+        _large = not self.training and _feats_bytes > _OFFLOAD_BYTES
+        # Save skip BEFORE conv â€” conv may free x.feats for large outputs
+        if _large:
             x_feats_cpu = x.feats.cpu()
         else:
             x_feats_cpu = None
@@ -332,11 +350,16 @@ class SparseConvNeXtBlock3d(nn.Module):
         if x_feats_cpu is not None and x.feats.numel() > 0:
             x.feats = torch.empty(0, device='cpu')
             torch.cuda.empty_cache()
-        h = h.replace(self.norm(h.feats))
-        # Chunk the MLP for large tensors — the 4x channel expansion
-        # creates a massive intermediate (10.7M × 256 × 2 = 5.1GB at level 3).
-        # Processing in 1M-voxel chunks keeps the intermediate at ~512MB.
-        if not self.training and h.feats.shape[0] > 2_000_000:
+        # Chunked norm to avoid 2Ã— feats peak
+        if _large:
+            LN_CHUNK = 1_000_000
+            for s in range(0, h.feats.shape[0], LN_CHUNK):
+                e = min(s + LN_CHUNK, h.feats.shape[0])
+                h.feats[s:e] = self.norm(h.feats[s:e])
+        else:
+            h = h.replace(self.norm(h.feats))
+        # Chunk the MLP â€” the 4x channel expansion creates massive intermediates
+        if _large:
             MLP_CHUNK = 1_000_000
             out_feats = torch.empty_like(h.feats)
             for s in range(0, h.feats.shape[0], MLP_CHUNK):
@@ -347,7 +370,12 @@ class SparseConvNeXtBlock3d(nn.Module):
         else:
             h = h.replace(self.mlp(h.feats))
         if x_feats_cpu is not None:
-            return h + h.replace(x_feats_cpu.to(h.feats.device))
+            SKIP_CHUNK = 1_000_000
+            for s in range(0, h.feats.shape[0], SKIP_CHUNK):
+                e = min(s + SKIP_CHUNK, h.feats.shape[0])
+                h.feats[s:e] += x_feats_cpu[s:e].to(h.feats.device)
+            del x_feats_cpu
+            return h
         else:
             return h + x
 
@@ -567,6 +595,11 @@ class SparseUnetVaeDecoder(nn.Module):
                         h = block(h, subdiv=guide_subs[i] if guide_subs is not None else None)
                 else:
                     h = block(h)
+                if i >= 2:
+                    torch.cuda.synchronize()
+                    a = torch.cuda.memory_allocated() / 1024**2
+                    r = torch.cuda.memory_reserved() / 1024**2
+                    print(f"[VRAM] level {i} block {j} ({type(block).__name__}): alloc={a:.0f}MB  reserved={r:.0f}MB  voxels={h.feats.shape[0]}  ch={h.feats.shape[1]}")
             if self.low_vram:
                 res.cpu()
             h._spatial_cache.clear()
@@ -592,7 +625,7 @@ class SparseUnetVaeDecoder(nn.Module):
         if self.training:
             h = h.type(x.dtype)
         # Chunked in-place layer_norm to avoid allocating a full copy of feats.
-        # At 10.7M voxels × 64ch × 2 bytes = 1.37GB, the full copy pushes
+        # At 10.7M voxels ï¿½ 64ch ï¿½ 2 bytes = 1.37GB, the full copy pushes
         # reserved from ~3GB to ~4.3GB.  Processing in 1M-row chunks keeps
         # the temporary at ~128MB.  Safe in inference (no autograd graph).
         if not self.training:
