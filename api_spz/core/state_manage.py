@@ -79,7 +79,13 @@ class TrellisState:
         from trellis2.pipelines import Trellis2ImageTo3DPipeline
 
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = "cuda"
+        if device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is not available. A CUDA-capable GPU with drivers is required.\n"
+                f"  torch version: {torch.__version__}\n"
+                f"  Run 'nvidia-smi' in a terminal to check GPU status."
+            )
         self._device = device
 
         print("[INIT] Loading Trellis 2 pipeline, please wait...")

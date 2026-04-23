@@ -87,37 +87,52 @@ def _worker_main(cmd_queue, result_queue):
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-    _apply_patches()
+    try:
+        _apply_patches()
 
-    import torch
-    import cv2
-    from trellis2.pipelines import Trellis2ImageTo3DPipeline
-    from trellis2.renderers import EnvMap
-    from trellis2.utils import render_utils
-    from trellis2.modules.sparse import SparseTensor
-    import o_voxel
+        import torch
+        import cv2
+        from trellis2.pipelines import Trellis2ImageTo3DPipeline
+        from trellis2.renderers import EnvMap
+        from trellis2.utils import render_utils
+        from trellis2.modules.sparse import SparseTensor
+        import o_voxel
 
-    print("[WORKER] Loading pipeline, please wait...")
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-    pipeline.cuda()
+        # Fast-fail before spending minutes downloading a 4B model
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA is not available. Check your NVIDIA drivers and PyTorch installation.\n"
+                f"  torch version: {torch.__version__}\n"
+                f"  Run 'nvidia-smi' in a terminal to check GPU status."
+            )
 
-    envmap = {
-        'forest': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/forest.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'sunset': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/sunset.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-        'courtyard': EnvMap(torch.tensor(
-            cv2.cvtColor(cv2.imread('assets/hdri/courtyard.exr', cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB),
-            dtype=torch.float32, device='cuda'
-        )),
-    }
+        print("[WORKER] Loading pipeline, please wait...", flush=True)
+        pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
+        pipeline.cuda()
+        print("[WORKER] Pipeline loaded, loading environment maps...", flush=True)
 
-    print("[WORKER] Pipeline ready.", flush=True)
-    result_queue.put({"status": "ready"})
+        _code_dir = os.path.dirname(os.path.abspath(__file__))
+        envmap = {}
+        for env_name in ('forest', 'sunset', 'courtyard'):
+            exr_path = os.path.join(_code_dir, 'assets', 'hdri', f'{env_name}.exr')
+            raw = cv2.imread(exr_path, cv2.IMREAD_UNCHANGED)
+            if raw is None:
+                raise RuntimeError(
+                    f"Failed to load '{exr_path}'. "
+                    f"File exists: {os.path.isfile(exr_path)}. "
+                    f"OpenCV may lack OpenEXR support — try: pip install opencv-contrib-python"
+                )
+            envmap[env_name] = EnvMap(torch.tensor(
+                cv2.cvtColor(raw, cv2.COLOR_BGR2RGB),
+                dtype=torch.float32, device='cuda'
+            ))
+
+        print("[WORKER] Pipeline ready.", flush=True)
+        result_queue.put({"status": "ready"})
+    except Exception as e:
+        traceback.print_exc()
+        result_queue.put({"status": "error", "error": f"Worker init failed: {e}"})
+        return
 
     while True:
         cmd = cmd_queue.get()
@@ -278,7 +293,26 @@ class PipelineWorker:
         self.process.daemon = True
         print("[INFO] Starting pipeline worker process...")
         self.process.start()
-        msg = self.result_queue.get(timeout=300)
+        # Poll for readiness, detecting early death quickly
+        import queue as _queue_mod
+        while True:
+            if not self.process.is_alive():
+                # Drain any error the worker managed to send before dying
+                try:
+                    msg = self.result_queue.get_nowait()
+                except _queue_mod.Empty:
+                    raise RuntimeError(
+                        f"Worker process died unexpectedly (exit code {self.process.exitcode}). "
+                        f"Check the console output above for errors."
+                    )
+                raise RuntimeError(f"Worker process died during init: {msg['error']}")
+            try:
+                msg = self.result_queue.get(timeout=2)
+                break
+            except _queue_mod.Empty:
+                continue
+        if msg["status"] == "error":
+            raise RuntimeError(f"Worker init failed: {msg['error']}")
         assert msg["status"] == "ready", f"Worker failed to start: {msg}"
         print("[INFO] Pipeline worker ready.")
 
