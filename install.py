@@ -291,7 +291,7 @@ def install_dependencies():
             
             print(f"Installing Pillow-SIMD: {simd_wheels[0].name}")
             try:
-                run_command_with_retry(f"pip install {simd_wheels[0]}", "Installing Pillow-SIMD")
+                run_command_with_retry(f'pip install "{simd_wheels[0]}"', "Installing Pillow-SIMD")
                 
                 # --- SAFETY CHECK ---
                 # Verify immediately if Pillow-SIMD actually works
@@ -317,32 +317,20 @@ def install_dependencies():
         # 4. Install Local Wheels
         print("\n--- Installing Custom Wheels ---")
         
-        # We map descriptions to glob patterns
-        wheel_patterns = {
-            "Nvdiffrast": "nvdiffrast*.whl",
-            "Nvdiffrec": "nvdiffrec*.whl",
-            "CuMesh": "cumesh*.whl",
-            "FlexGEMM": "flex_gemm*.whl",
-            "O-Voxel": "o_voxel*.whl",
-            "Flash Attention": "flash_attn*.whl",
-            "Utils3D": "utils3d*.whl"
-        }
+        for whl_file in sorted(whl_dir.glob("*.whl")):
+            # Pillow-SIMD is handled above
+            if whl_file.name.lower().startswith("pillow"):
+                continue
+            print(f"Installing: {whl_file.name}")
+            run_command_with_retry(f'pip install "{whl_file}"', f"Installing {whl_file.name}")
 
-        for desc, pattern in wheel_patterns.items():
-            found = list(whl_dir.glob(pattern))
-            if found:
-                # Install the first match found
-                run_command_with_retry(f"pip install {found[0]}", f"Installing {desc} Wheel")
-            else:
-                if desc == "Utils3D":
-                    # Fallback to git for utils3d if not compiled
-                    print(f"Utils3D wheel not found. Installing via Git...")
-                    run_command_with_retry(
-                        "pip install git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8", 
-                        "Installing Utils3D (Git)"
-                    )
-                else:
-                    print(f"Warning: Wheel for {desc} (pattern: {pattern}) not found in 'whl' folder.")
+        # Fallback for utils3d if no wheel was present
+        if not list(whl_dir.glob("utils3d*.whl")):
+            print("Utils3D wheel not found. Installing via Git...")
+            run_command_with_retry(
+                "pip install git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8",
+                "Installing Utils3D (Git)"
+            )
 
         print("\nInstallation completed successfully!")
 
@@ -352,6 +340,7 @@ def install_dependencies():
     except Exception as e:
         print(f"\nUnexpected error: {str(e)}")
         sys.exit(1)
+
 
 def verify_installation():
     """Verify installation."""
