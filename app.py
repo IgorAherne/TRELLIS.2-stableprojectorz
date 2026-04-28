@@ -5,11 +5,11 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 os.environ.setdefault('SETUPTOOLS_USE_DISTUTILS', 'stdlib')
 
-import gradio as gr
-
 import sys
+import traceback
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+import gradio as gr
 from datetime import datetime
 import shutil
 from typing import *
@@ -366,8 +366,12 @@ def image_to_3d(
     profiler_max_duration_sec: float,
     profiler_max_events: int,
     req: gr.Request,
+    progress=gr.Progress(),
 ) -> str:
     try:
+        def keepalive():
+            progress(0.5, desc="Generating... (GPU working)")
+
         state, images = worker.generate(
             image=image,
             seed=seed,
@@ -403,9 +407,11 @@ def image_to_3d(
                 "max_duration_sec": profiler_max_duration_sec,
                 "max_events": profiler_max_events,
             },
+            progress_callback=keepalive,
         )
     except Exception as e:
-        print(f"[ERROR] Generation failed: {e}")
+        print(f"[ERROR] Generation failed: {type(e).__name__}: {e}")
+        traceback.print_exc()
         return {}, empty_html
 
     # --- HTML Construction ---
@@ -490,6 +496,11 @@ def extract_glb(
     Returns:
         str: The path to the extracted GLB file.
     """
+    if not state or 'shape_slat_feats' not in state:
+        raise RuntimeError(
+            "No generation state available. The 3D generation may have failed or timed out. "
+            "Please re-run Generate before clicking Download GLB."
+        )
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%dT%H%M%S") + f".{now.microsecond // 1000:03d}"

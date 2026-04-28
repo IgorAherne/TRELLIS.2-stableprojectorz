@@ -307,7 +307,7 @@ class PipelineWorker:
                     )
                 raise RuntimeError(f"Worker process died during init: {msg['error']}")
             try:
-                msg = self.result_queue.get(timeout=2)
+                msg = self.result_queue.get(timeout=None)
                 break
             except _queue_mod.Empty:
                 continue
@@ -318,12 +318,12 @@ class PipelineWorker:
 
     def preprocess(self, image):
         self.cmd_queue.put({"action": "preprocess", "image": image})
-        result = self.result_queue.get(timeout=120)
+        result = self.result_queue.get(timeout=None)
         if result["status"] == "error":
             raise RuntimeError(result["error"])
         return result["image"]
 
-    def generate(self, image, seed, ss_params, shape_params, tex_params, pipeline_type, nviews, profiling=None):
+    def generate(self, image, seed, ss_params, shape_params, tex_params, pipeline_type, nviews, profiling=None, progress_callback=None):
         self.cmd_queue.put({
             "action": "generate",
             "image": image,
@@ -335,7 +335,15 @@ class PipelineWorker:
             "nviews": nviews,
             "profiling": profiling or {},
         })
-        result = self.result_queue.get(timeout=600)
+        import queue as _queue_mod
+        while True:
+            try:
+                result = self.result_queue.get(timeout=10)
+                break
+            except _queue_mod.Empty:
+                if progress_callback:
+                    progress_callback()
+                continue
         if result["status"] == "error":
             raise RuntimeError(result["error"])
         return result["state"], result["images"]
@@ -348,7 +356,7 @@ class PipelineWorker:
             "texture_size": texture_size,
             "glb_path": glb_path,
         })
-        result = self.result_queue.get(timeout=600)
+        result = self.result_queue.get(timeout=None)
         if result["status"] == "error":
             raise RuntimeError(result["error"])
         return result["glb_path"]
@@ -356,6 +364,6 @@ class PipelineWorker:
     def shutdown(self):
         try:
             self.cmd_queue.put({"action": "shutdown"})
-            self.process.join(timeout=10)
+            self.process.join(timeout=20)
         except Exception:
             self.process.kill()
