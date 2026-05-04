@@ -1,0 +1,46 @@
+services:
+  trellis2:
+    build: .
+    image: trellis2:latest
+
+    # ── GPU access ──────────────────────────────────────────────────────────────
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # ── Environment ─────────────────────────────────────────────────────────────
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      # Set to 'api' to run only the FastAPI server, or 'both' for both services
+      MODE: ui
+      # Use PyTorch built-in SDPA — flash-attn failed to build for this CUDA combo
+      ATTN_BACKEND: sdpa
+      # HuggingFace token — required for gated models (facebook/dinov3-vitl16-pretrain-lvd1689m)
+      # Get yours at https://huggingface.co/settings/tokens
+      HF_TOKEN: your_token_here  # https://huggingface.co/settings/tokens
+
+    # ── Volumes ─────────────────────────────────────────────────────────────────
+    volumes:
+      # Model weights persist across container restarts (~20 GB, downloaded on first run)
+      - models_cache:/app/models
+      # Pass-through tmp dirs so generated files are accessible on the host
+      - ./tmp:/app/tmp
+      - ./temp:/app/temp
+
+    # ── Ports ───────────────────────────────────────────────────────────────────
+    ports:
+      - "8080:8080"   # Gradio web UI
+      - "7960:7960"   # FastAPI (StableProjectorz)
+
+    # Shared memory for PyTorch multiprocessing (pipeline_worker forks a subprocess)
+    shm_size: 8g
+
+    restart: unless-stopped
+
+volumes:
+  models_cache:
