@@ -1,0 +1,28 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Windows wheels (Linux doesn't need these)
+whl/
+
+# Runtime output dirs
+tmp/
+temp/
+
+# Model cache (mounted as volume at runtime)
+models/
+MODELS/
+
+# IDE / project files
+*.pyproj
+*.sln
+.vscode/
+.idea/
+
+# Python virtual envs / conda
+venv/
+.venv/
+env/
