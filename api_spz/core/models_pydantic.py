@@ -1,7 +1,8 @@
 # api_spz/core/models_pydantic.py
+import re
 from enum import Enum
 from typing import Optional, Dict
-from fastapi import Form
+from fastapi import Form, HTTPException
 from pydantic import BaseModel, Field
 
 
@@ -25,7 +26,17 @@ class GenerationArgForm:
         tex_rescale_t: float = Form(3.0),
         tex_guidance_strength: float = Form(1.0),
         output_format: str = Form("glb"),
+        chroma_key: str = Form(""),          # '' | 'auto' | '#rrggbb' -> flat background becomes alpha
+        chroma_tolerance: int = Form(24),    # RGB distance counted as background
+        chroma_shadows: bool = Form(True),   # also key the subject's shadow on the backdrop
     ):
+        self.chroma_key = chroma_key.strip().lower()
+        # Checked here rather than in the route: FastAPI resolves this form before the
+        # handler's try/except, so a bad value is answered with a 400 instead of a 500.
+        if self.chroma_key not in ("", "auto") and not re.fullmatch(r"#?[0-9a-f]{6}", self.chroma_key):
+            raise HTTPException(status_code=400, detail="chroma_key must be '', 'auto' or '#rrggbb'")
+        self.chroma_tolerance = chroma_tolerance
+        self.chroma_shadows = chroma_shadows
         self.seed = seed
         self.guidance_scale = guidance_scale
         self.num_inference_steps = num_inference_steps

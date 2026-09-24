@@ -10,7 +10,15 @@ from PIL import Image
 import trimesh
 import trimesh.visual
 from flex_gemm.ops.grid_sample import grid_sample_3d
-import nvdiffrast.torch as dr
+# nvdiffrast is optional here: TRELLIS_UV_RASTERIZER=torch never imports it and bakes
+# with uvraster.py instead.
+dr = None
+if os.environ.get('TRELLIS_UV_RASTERIZER', 'auto').strip().lower() != 'torch':
+    try:
+        import nvdiffrast.torch as dr
+    except ImportError:
+        dr = None
+from .uvraster import rasterize_uv  # pure-PyTorch alternative, see uvraster.py
 import cumesh
 
 
@@ -286,32 +294,46 @@ def to_glb(
     if verbose:
         print("Sampling attributes...", end='', flush=True)
         
-    # Setup differentiable rasterizer context
-    ctx = dr.RasterizeCudaContext()
-    # Prepare UV coordinates for rasterization (rendering in UV space)
-    uvs_rast = torch.cat([out_uvs * 2 - 1, torch.zeros_like(out_uvs[:, :1]), torch.ones_like(out_uvs[:, :1])], dim=-1).unsqueeze(0)
-    rast = torch.zeros((1, texture_size, texture_size, 4), device='cuda', dtype=torch.float32)
+    # UV rasteriser. uvraster.py is a pure-PyTorch replacement for nvdiffrast here, with the
+    # same texel conventions. TRELLIS_UV_RASTERIZER: 'auto' (default - nvdiffrast when it is
+    # installed, else uvraster), 'torch', or 'nvdiffrast'. Both paths yield the coverage
+    # mask and the 3D surface point under every covered texel; the rest of the bake is shared.
+    _rasterizer = os.environ.get('TRELLIS_UV_RASTERIZER', 'auto').strip().lower()
+    if _rasterizer == 'nvdiffrast' and dr is None:
+        raise ImportError("TRELLIS_UV_RASTERIZER=nvdiffrast, but nvdiffrast is not installed")
+    if _rasterizer == 'torch' or dr is None:
+        mask, tri_id, bary = rasterize_uv(out_uvs, out_faces, texture_size)
+        tri_verts = out_vertices[out_faces[tri_id[mask]]]              # (N_texels, 3, 3)
+        valid_pos = (tri_verts * bary[mask].unsqueeze(-1)).sum(dim=1)  # (N_texels, 3)
+        del tri_id, bary, tri_verts
+        torch.cuda.empty_cache()
+    else:
+        # Setup differentiable rasterizer context
+        ctx = dr.RasterizeCudaContext()
+        # Prepare UV coordinates for rasterization (rendering in UV space)
+        uvs_rast = torch.cat([out_uvs * 2 - 1, torch.zeros_like(out_uvs[:, :1]), torch.ones_like(out_uvs[:, :1])], dim=-1).unsqueeze(0)
+        rast = torch.zeros((1, texture_size, texture_size, 4), device='cuda', dtype=torch.float32)
     
-    # Rasterize in chunks to save memory
-    for i in range(0, out_faces.shape[0], 100000):
-        rast_chunk, _ = dr.rasterize(
-            ctx, uvs_rast, out_faces[i:i+100000],
-            resolution=[texture_size, texture_size],
-        )
-        mask_chunk = rast_chunk[..., 3:4] > 0
-        rast_chunk[..., 3:4] += i # Store face ID in alpha channel
-        rast = torch.where(mask_chunk, rast_chunk, rast)
+        # Rasterize in chunks to save memory
+        for i in range(0, out_faces.shape[0], 100000):
+            rast_chunk, _ = dr.rasterize(
+                ctx, uvs_rast, out_faces[i:i+100000],
+                resolution=[texture_size, texture_size],
+            )
+            mask_chunk = rast_chunk[..., 3:4] > 0
+            rast_chunk[..., 3:4] += i # Store face ID in alpha channel
+            rast = torch.where(mask_chunk, rast_chunk, rast)
     
-    # Mask of valid pixels in texture
-    mask = rast[0, ..., 3] > 0
+        # Mask of valid pixels in texture
+        mask = rast[0, ..., 3] > 0
     
-    # Interpolate 3D positions in UV space (finding 3D coord for every texel)
-    pos = dr.interpolate(out_vertices.unsqueeze(0), rast, out_faces)[0][0]
-    valid_pos = pos[mask]
+        # Interpolate 3D positions in UV space (finding 3D coord for every texel)
+        pos = dr.interpolate(out_vertices.unsqueeze(0), rast, out_faces)[0][0]
+        valid_pos = pos[mask]
     
-    # Free rasterization intermediates — only mask and valid_pos needed from here
-    del rast, pos, uvs_rast, ctx
-    torch.cuda.empty_cache()
+        # Free rasterization intermediates — only mask and valid_pos needed from here
+        del rast, pos, uvs_rast, ctx
+        torch.cuda.empty_cache()
     
     # Map these positions back to the *original* high-res mesh to get accurate attributes
     # This corrects geometric errors introduced by simplification/remeshing
