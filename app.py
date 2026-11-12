@@ -4,6 +4,9 @@ import os
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 os.environ.setdefault('SETUPTOOLS_USE_DISTUTILS', 'stdlib')
+# PyTorch on Windows allocates CPU memory through mimalloc, which by default keeps freed
+# memory committed. Purging at once hands it straight back. Must be set before torch loads.
+os.environ.setdefault('MIMALLOC_PURGE_DELAY', '0')
 
 import sys
 import traceback
