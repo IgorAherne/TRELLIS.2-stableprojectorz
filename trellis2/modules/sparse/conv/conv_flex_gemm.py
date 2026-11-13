@@ -60,12 +60,15 @@ def sparse_conv3d_forward(self, x: SparseTensor) -> SparseTensor:
         if neighbor_map_bytes >= 256 * 1024 * 1024:
             # Large map � bounce feats to CPU so feats (1.37GB) and
             # neighbor_map (1.16GB) never coexist on GPU during build.
+            # The tensor's shape comes from its feats unless it was set explicitly, so take
+            # it before the feats are emptied (otherwise it loses a dimension).
+            full_shape = torch.Size([*x.shape, *x.spatial_shape])
             feats_cpu = x.feats.cpu()
             x.feats = torch.empty(0, dtype=x.feats.dtype, device='cpu')
             torch.cuda.empty_cache()
             neighbor_cache = SubMConv3dFunction._compute_neighbor_cache(
                 x.coords,
-                torch.Size([*x.shape, *x.spatial_shape]),
+                full_shape,
                 (Kw, Kh, Kd),
                 self.dilation
             )
