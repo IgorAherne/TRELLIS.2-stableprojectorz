@@ -1,0 +1,73 @@
+-------------------------------------------------------------------------------
+
+	A one-click installer for Microsoft Trellis.2
+
+	You can use either the StableProjectorz program (www.stableprojectorz.com) or a browser.
+
+	run-stableprojectorz folder uses my extra vram optimizations for textures, if you have the StableProjectorz program.
+	Therefore can be faster.
+
+	The first launch downloads the Python packages and the models (about 20 GB in total), so it takes a while.
+	Later launches start right away.
+
+-------------------------------------------------------------------------------
+
+	To use with StableProjectorz, go into 'run-stableprojectorz' folder, then double click:
+
+		-  run-stableprojectorz.bat
+
+	After the window is prepared, in StableProjectorz activate the 3D mode, click on 3D connection button (bottom right corner).
+	Then, enter ip and port:   127.0.0.1    7960
+
+
+-------------------------------------------------------------------------------
+
+	To use with browser, go to run-browser folder:
+
+		-  run-gradio.bat
+
+	After the window is prepared, open your browser (Chrome/Edge) and type  127.0.0.1:8080  into the url, as if it was a website.
+	The window prints the exact address when it is ready.
+
+
+-------------------------------------------------------------------------------
+
+	To update to the newest code, double click:
+
+		-  tools\update.bat
+
+	Your models and Python packages are kept. The next launch re-checks the packages, which takes a few minutes.
+
+
+-------------------------------------------------------------------------------
+
+	If something is broken:
+
+		1) delete the file  code\trellis2_init_done.txt  and launch again.
+		   The installer then re-checks every package and repairs what is wrong.
+
+		2) if that does not help, also delete the folder  code\venv  and launch again.
+		   This downloads the Python packages again (about 4 GB). The models are kept.
+
+	Keep the folder's path short and simple, for example  C:\trellis2
+	The path must not contain the  &  character.
+
+	You can move or rename the folder: the next launch repairs its Python environment by itself.
+
+
+-------------------------------------------------------------------------------
+
+If you want to use my simple api, which the StableProjectorz uses - docs are in /code/api_spz/api-documentation.html
+Otherwise use the api that Trellis.2 comes with by default.
+
+
+Any questions? Join the Discord: https://discord.gg/aWbnX2qan2
+
+
+Igor Aherne
+
+https://github.com/IgorAherne/TRELLIS.2-stableprojectorz
+https://stableprojectorz.com
+Discord: https://discord.gg/aWbnX2qan2
+
+November 2026

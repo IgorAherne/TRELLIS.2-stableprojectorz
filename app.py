@@ -21,8 +21,6 @@ import io
 import atexit, signal
 
 from pipeline_worker import PipelineWorker
-from trellis2.modules.sparse import SparseTensor
-import torch
 
 MAX_SEED = np.iinfo(np.int32).max
 TMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmp')
@@ -317,25 +315,6 @@ def preprocess_image(image: Image.Image) -> Image.Image:
     return worker.preprocess(image)
 
 
-def pack_state(latents: Tuple[SparseTensor, SparseTensor, int]) -> dict:
-    shape_slat, tex_slat, res = latents
-    return {
-        'shape_slat_feats': shape_slat.feats.cpu().numpy(),
-        'tex_slat_feats': tex_slat.feats.cpu().numpy(),
-        'coords': shape_slat.coords.cpu().numpy(),
-        'res': res,
-    }
-    
-    
-def unpack_state(state: dict) -> Tuple[SparseTensor, SparseTensor, int]:
-    shape_slat = SparseTensor(
-        feats=torch.from_numpy(state['shape_slat_feats']).cuda(),
-        coords=torch.from_numpy(state['coords']).cuda(),
-    )
-    tex_slat = shape_slat.replace(torch.from_numpy(state['tex_slat_feats']).cuda())
-    return shape_slat, tex_slat, state['res']
-
-
 def get_seed(randomize_seed: bool, seed: int) -> int:
     """
     Get the random seed.
@@ -628,7 +607,9 @@ def create_examples_panel(image_prompt):
     return examples
 
 
-with gr.Blocks(delete_cache=(600, 600)) as demo:
+# Gradio deletes the files it serves (the GLB behind the Download button) once they are older than the
+# second number. 10 minutes suits a public demo; on your own PC the download would vanish while you look away.
+with gr.Blocks(delete_cache=(3600, 24 * 3600)) as demo:
     gr.Markdown("""
     ## Image to 3D Asset with [TRELLIS.2](https://microsoft.github.io/TRELLIS.2)
     * Upload an image (preferably with an alpha-masked foreground object) and click Generate to create a 3D asset.

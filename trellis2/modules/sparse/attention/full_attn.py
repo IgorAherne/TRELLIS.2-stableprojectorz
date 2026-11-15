@@ -213,6 +213,23 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
             max_q_seqlen = max(q_seqlen)
             max_kv_seqlen = max(kv_seqlen)
         out = flash_attn_3.flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_kv, max_q_seqlen, max_kv_seqlen)
+    elif config.ATTN == 'sdpa':
+        # PyTorch's attention has no variable-length form: one call per sequence of the batch.
+        if num_all_args == 1:
+            q, k, v = qkv.unbind(dim=1)
+        elif num_all_args == 2:
+            k, v = kv.unbind(dim=1)
+        outs = []
+        q_start = kv_start = 0
+        for q_len, kv_len in zip(q_seqlen, kv_seqlen):
+            q_i = q[q_start:q_start + q_len].transpose(0, 1).unsqueeze(0)       # [1, H, Lq, C]
+            k_i = k[kv_start:kv_start + kv_len].transpose(0, 1).unsqueeze(0)    # [1, H, Lkv, C]
+            v_i = v[kv_start:kv_start + kv_len].transpose(0, 1).unsqueeze(0)
+            out_i = torch.nn.functional.scaled_dot_product_attention(q_i, k_i, v_i)
+            outs.append(out_i.squeeze(0).transpose(0, 1))                       # [Lq, H, C]
+            q_start += q_len
+            kv_start += kv_len
+        out = torch.cat(outs, dim=0)
     else:
         raise ValueError(f"Unknown attention module: {config.ATTN}")
     

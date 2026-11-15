@@ -1,21 +1,10 @@
 # trellis2/modules/sparse/config.py
 from typing import *
+from ..attention.config import detect_best_backend
 
 CONV = 'flex_gemm' 
 DEBUG = False
 ATTN = None  # resolved in __from_env
-
-def _detect_best_backend():
-    """Pick the best available sparse attention backend based on GPU compute capability."""
-    import torch
-    if torch.cuda.is_available():
-        major, minor = torch.cuda.get_device_capability()
-        sm = major * 10 + minor
-        if sm >= 80:
-            return 'flash_attn'
-        else:
-            return 'xformers'
-    return 'flash_attn'
 
 def __from_env():
     import os
@@ -34,10 +23,10 @@ def __from_env():
         CONV = env_sparse_conv_backend
     if env_sparse_debug is not None:
         DEBUG = env_sparse_debug == '1'
-    if env_sparse_attn_backend is not None and env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3']:
+    if env_sparse_attn_backend is not None and env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa']:
         ATTN = env_sparse_attn_backend
     else:
-        ATTN = _detect_best_backend()
+        ATTN = detect_best_backend()
         
     print(f"[SPARSE] Conv backend: {CONV}; Attention backend: {ATTN}")
         

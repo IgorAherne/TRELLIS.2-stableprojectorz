@@ -7,13 +7,22 @@ Optimized the code to fit better into 8GB gpus, even with 1024³ voxels.
 
 Also, fixed the nasty vertical lines [bug](https://www.reddit.com/r/StableDiffusion/comments/1r197yy/trellis_2_3d_model_generation_problems/) thanks to the [visualbruno Bruno Fargnoli](https://github.com/visualbruno)
 
+<h2>Updating and repairing the one-click installer:</h2>
+
+* `tools/update.bat` fetches the newest code and launcher scripts. Models and Python packages are kept; the next launch re-checks the packages, which takes a few minutes.
+* If the app stops starting, delete `code/trellis2_init_done.txt` and launch again: the installer re-checks every package.
+* If that does not help, also delete the `code/venv` folder and launch again.
+
+Every Python package is pinned to a tested version in `requirements-lock.txt`, so a new release of some library can no longer break a fresh install.
+
 <h2>If you want to install manually:</h2>
 
-1) use python 3.11
-2) follow steps in `code/install.py` around line 130, method `install_dependencies()`
-4) you will need to pip install wheel files, find them in `code/whl` folder. Install only whl that are mentioned in 2).
-5) Lastly, from inside the `code` folder, do `git submodule deinit -f --all` and then `git submodule update --init --recursive`.
-6) launch via `python app.py`
+1) use python 3.11 on Windows, inside a fresh virtual environment
+2) run `python install.py` from the repository's folder. It installs PyTorch 2.8.0 (Cuda 12.8), the packages of `requirements-lock.txt`, the wheels of the `whl` folder, and downloads the models.
+3) the `flash_attn` wheel (RTX 30xx and newer) is too big for GitHub: take it from the `code/whl` folder of the release zip and put it into `whl` before step 2. Without it the app uses xformers.
+4) launch via `python app.py`. The TRELLIS.2 weights are read from HuggingFace's cache, where `install.py` put them; the one-click installer sets `HF_HOME` to `code/models` for both.
+
+The `.bat` files of the one-click installer, and how the release zip is put together, are in the `installer` folder.
 
 
 <br>

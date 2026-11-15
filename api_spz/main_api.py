@@ -6,17 +6,23 @@ import platform
 import torch
 from contextlib import asynccontextmanager
 
+print("a")
+
 # Add the parent directory to sys.path to allow imports from api_spz
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 from pathlib import Path
+print("b")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+print("c")
 # Import the StableProjectorz API routes
 from api_spz.routes.generation import router as generation_router
+print("d")
 from api_spz.core.state_manage import state
+print("e")
 
 # Set up logging
 os.makedirs("temp", exist_ok=True)

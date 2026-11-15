@@ -62,6 +62,8 @@ def calc_window_partition(
             'cu_seqlens': torch.cat([torch.tensor([0], device=tensor.device), torch.cumsum(seq_lens, dim=0)], dim=0).int(),
             'max_seqlen': torch.max(seq_lens)
         }
+    else:
+        raise ValueError(f"Windowed attention needs xformers or flash_attn, got: {config.ATTN}")
 
     return fwd_indices, bwd_indices, seq_lens, attn_func_args
     

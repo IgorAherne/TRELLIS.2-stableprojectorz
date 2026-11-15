@@ -1,20 +1,31 @@
 # trellis2/modules/attention/config.py
 from typing import *
+import functools
+import importlib
+from .backend_support import MIN_CAPABILITY, backends_for
 
 BACKEND = None  # resolved in __from_env
 DEBUG = False
 
-def _detect_best_backend():
-    """Pick the best available attention backend based on GPU compute capability."""
+# The module each backend really needs. xformers.ops refuses to load beside a flash_attn it does not know.
+_BACKEND_MODULES = {'flash_attn': 'flash_attn', 'xformers': 'xformers.ops'}
+
+
+@functools.lru_cache(maxsize=None)
+def detect_best_backend() -> str:
+    """The best backend this card can run and that really loads; PyTorch's own attention otherwise."""
     import torch
     if torch.cuda.is_available():
-        major, minor = torch.cuda.get_device_capability()
-        sm = major * 10 + minor
-        if sm >= 80:
-            return 'flash_attn'
-        else:
-            return 'xformers'
-    return 'flash_attn'
+        candidates = backends_for(torch.cuda.get_device_capability())
+    else:
+        candidates = list(MIN_CAPABILITY)
+    for name in candidates:
+        try:
+            importlib.import_module(_BACKEND_MODULES[name])
+            return name
+        except Exception as e:   # a missing wheel, or a DLL that will not load on this card or driver
+            print(f"[ATTENTION] {name} cannot be used: {type(e).__name__}: {e}")
+    return 'sdpa'
 
 def __from_env():
     import os
@@ -28,7 +39,7 @@ def __from_env():
     if env_attn_backend is not None and env_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa', 'naive']:
         BACKEND = env_attn_backend
     else:
-        BACKEND = _detect_best_backend()
+        BACKEND = detect_best_backend()
     
     if env_attn_debug is not None:
         DEBUG = env_attn_debug == '1'

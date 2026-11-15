@@ -101,28 +101,32 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         Args:
             path (str): The path to the model. Can be either local path or a Hugging Face repository.
         """
+        print('a1')
         pipeline = super(Trellis2ImageTo3DPipeline, Trellis2ImageTo3DPipeline).from_pretrained(path)
+        print('b1')
         new_pipeline = Trellis2ImageTo3DPipeline()
+        print('c1')
         new_pipeline.__dict__ = pipeline.__dict__
         args = pipeline._pretrained_args
 
         new_pipeline.sparse_structure_sampler = getattr(samplers, args['sparse_structure_sampler']['name'])(**args['sparse_structure_sampler']['args'])
         new_pipeline.sparse_structure_sampler_params = args['sparse_structure_sampler']['params']
-
+        print('d1')
         new_pipeline.shape_slat_sampler = getattr(samplers, args['shape_slat_sampler']['name'])(**args['shape_slat_sampler']['args'])
         new_pipeline.shape_slat_sampler_params = args['shape_slat_sampler']['params']
-
+        print('e1')
         new_pipeline.tex_slat_sampler = getattr(samplers, args['tex_slat_sampler']['name'])(**args['tex_slat_sampler']['args'])
         new_pipeline.tex_slat_sampler_params = args['tex_slat_sampler']['params']
-
+        print('f1')
         new_pipeline.shape_slat_normalization = args['shape_slat_normalization']
         new_pipeline.tex_slat_normalization = args['tex_slat_normalization']
-
+        print('g1')
         new_pipeline.image_cond_model = getattr(image_feature_extractor, args['image_cond_model']['name'])(**args['image_cond_model']['args'])
         new_pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])
-        
+        print('h1')
         new_pipeline.low_vram = args.get('low_vram', True)
         new_pipeline.default_pipeline_type = args.get('default_pipeline_type', '1024_cascade')
+        print('i1')
         new_pipeline.pbr_attr_layout = {
             'base_color': slice(0, 3),
             'metallic': slice(3, 4),
@@ -130,7 +134,7 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             'alpha': slice(5, 6),
         }
         new_pipeline._device = 'cpu'
-
+        print('j1')
         return new_pipeline
 
     def to(self, device: torch.device) -> None:

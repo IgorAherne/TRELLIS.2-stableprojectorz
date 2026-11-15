@@ -216,3 +216,8 @@ tmp/profiling/summary_inference_run.txt
 diff.txt
 /tmp
 /temp
+
+# One-click installer: kept out of git, and safe from any git clean
+/models
+/whl/flash_attn*.whl
+trellis2_init_done.txt

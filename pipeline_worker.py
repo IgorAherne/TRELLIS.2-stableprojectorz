@@ -106,26 +106,31 @@ def _worker_main(cmd_queue, result_queue):
                 f"  Run 'nvidia-smi' in a terminal to check GPU status."
             )
 
-        print("[WORKER] Loading pipeline, please wait...", flush=True)
-        pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
-        pipeline.cuda()
-        print("[WORKER] Pipeline loaded, loading environment maps...", flush=True)
-
+        # Environment maps first: a broken OpenCV shows up in a second, not after minutes of model loading
         _code_dir = os.path.dirname(os.path.abspath(__file__))
-        envmap = {}
+        envmap_images = {}
         for env_name in ('forest', 'sunset', 'courtyard'):
             exr_path = os.path.join(_code_dir, 'assets', 'hdri', f'{env_name}.exr')
             raw = cv2.imread(exr_path, cv2.IMREAD_UNCHANGED)
             if raw is None:
                 raise RuntimeError(
-                    f"Failed to load '{exr_path}'. "
-                    f"File exists: {os.path.isfile(exr_path)}. "
-                    f"OpenCV may lack OpenEXR support — try: pip install opencv-contrib-python"
+                    f"Failed to load '{exr_path}'. File exists: {os.path.isfile(exr_path)}. "
+                    f"The installed OpenCV ({cv2.__version__}) cannot read EXR files. "
+                    f"To repair: close this window, delete the file 'trellis2_init_done.txt' in the 'code' folder "
+                    f"and launch again; the installer then puts the tested package versions back."
                 )
-            envmap[env_name] = EnvMap(torch.tensor(
-                cv2.cvtColor(raw, cv2.COLOR_BGR2RGB),
-                dtype=torch.float32, device='cuda'
-            ))
+            envmap_images[env_name] = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+
+        print("[WORKER] Loading pipeline, please wait...", flush=True)
+        pipeline = Trellis2ImageTo3DPipeline.from_pretrained('microsoft/TRELLIS.2-4B')
+        pipeline.cuda()
+        print("[WORKER] Pipeline loaded, loading environment maps...", flush=True)
+
+        envmap = {
+            env_name: EnvMap(torch.tensor(image, dtype=torch.float32, device='cuda'))
+            for env_name, image in envmap_images.items()
+        }
+        del envmap_images
 
         print("[WORKER] Pipeline ready.", flush=True)
         result_queue.put({"status": "ready"})
