@@ -1,0 +1,63 @@
+{
+  "wheel": "nvdiffrast-0.4.0+spellcast3d.1-cp311-cp311-win_amd64.whl",
+  "sha256": "054a5aa5818c99574ff371659d7b7a7ae915555c0eb6d8af5dd81faf5134ec61",
+  "size_bytes": 4177214,
+  "built": "2026-11-19T03:06:27+00:00",
+  "sources": {
+    "nvdiffrast": {
+      "repo": "https://github.com/IgorAherne/nvdiffrast.git",
+      "branch": "updates-1",
+      "commit": "933724c7d81c58f0231cb5d5e8bc70024ac01b29",
+      "how": "exported with git archive; csrc/, nvdiffrast/, setup.py and pyproject.toml equal upstream's tag v0.4.0 (253ac4fcea7de5f396371124af597e6cc957bfae), the fork's three commits after it add build outputs and a .gitignore only",
+      "license": "NVIDIA Source Code License for nvdiffrast (non-commercial; LICENSE.txt in the wheel's dist-info)"
+    },
+    "upstream": {
+      "repo": "https://github.com/NVlabs/nvdiffrast.git",
+      "tag": "v0.4.0",
+      "commit": "253ac4fcea7de5f396371124af597e6cc957bfae"
+    }
+  },
+  "why": "the wheel it replaces (nvdiffrast-0.4.0-cp311-cp311-win_amd64.whl, sha256 153c8c63c88ef7aab6ec5f48597c4c44d799693a1e80d09b9aaed5df495f145d) had host code built with /arch:AVX2: BMI2 shlx/shrx/sarx/bzhi at 22 sites, some run at import, so on a CPU with AVX but no AVX2 (Sandy / Ivy Bridge, i7-4930K) Pixal3D's server died while starting. This build has no /arch (MSVC x64's SSE2 baseline); its GPU code is built for the same architectures",
+  "version": "0.4.0+spellcast3d.1: a new version, so that pip replaces an installed 0.4.0 (with the same version it answers 'already installed' and keeps the old binary); a constraint nvdiffrast==0.4.0 still accepts it",
+  "python": "CPython 3.11 of code\\venvs\\pixal3d (tools\\python), setup.py build_ext; the wheel is the shipped wheel's files with the rebuilt extension and the new version (RECORD rewritten)",
+  "torch_at_build": "2.8.0+cu128 (CUDA 12.8) of code\\venvs\\pixal3d",
+  "msvc": "Microsoft (R) C/C++ Optimizing Compiler for x64, toolset 14.44.35207 (vcvars64), /O2 /GL /MD, no /arch; CL and _CL_ unset",
+  "windows_sdk": "10.0.26100.0",
+  "cuda": "CUDA 12.8 (nvcc V12.8.93) at C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8",
+  "torch_cuda_arch_list": "6.1;7.0;7.5;8.0;8.6;8.9;9.0+PTX",
+  "cuobjdump": {
+    "_nvdiffrast_c.cp311-win_amd64.pyd": {
+      "sass_sm": [
+        61,
+        70,
+        75,
+        80,
+        86,
+        89,
+        90
+      ],
+      "ptx_compute": [
+        90
+      ]
+    }
+  },
+  "pyds": [
+    "_nvdiffrast_c.cp311-win_amd64.pyd"
+  ],
+  "pyd_sha256": "ca206aa9a4a51819bc6b116d0e238e9a3d80e7fcb3fd546571534f14e1966edd",
+  "cpu_instructions": "legacy SSE / VEX scalar code 198 / 0, BMI2 0, FMA 0, AVX2 12 (the C runtime's CPU-checked strlen / memchr); the replaced pyd: 0 / 221, BMI2 22",
+  "checks": "rasterize (+db), interpolate (+da), texture linear and mipmapped, DepthPeeler 2 layers bit-equal to the replaced wheel on an RTX 3060; antialias within its own run-to-run noise (atomics: 431 of 1.57 M values by <= 1.2e-7 against the replaced wheel's 464 against itself); a 1536 tall_man through a fresh install decodes the same mesh; pip install --force-reinstall --no-deps and the RECORD check clean",
+  "build_command": "code/logs/profiling/release-check-2026-11-19/windows/tools/build_nvdiffrast.bat (setup.py build_ext inside vcvars64, MAX_JOBS 16, CUDA_VISIBLE_DEVICES=-1), then the extension swapped into the shipped wheel",
+  "rebuild": "Spellcast3D's code/release/wheels/nvdiffrast/build_nvdiffrast_win.bat (https://github.com/IgorAherne/spellcast3d): the same source, compiler settings and GPU architectures, as a wheel built from the source; `prepare_release.py scan-cpu <wheel>` there tells whether a build runs on a CPU without AVX2",
+  "runtime_requirements": {
+    "install": "pip install <this wheel>  (install.py installs every wheel in the whl folder)",
+    "import_needs": [
+      "torch 2.8.x+cu128"
+    ]
+  },
+  "wheel_files": 9,
+  "wheel_license_files": [
+    "nvdiffrast-0.4.0+spellcast3d.1.dist-info/LICENSE.txt"
+  ],
+  "build_log": "code/logs/profiling/release-check-2026-11-19/windows/w7/nvdiffrast/build.log"
+}
