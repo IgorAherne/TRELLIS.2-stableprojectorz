@@ -107,6 +107,77 @@ async def _get_image(file: Optional[UploadFile], image_base64: Optional[str]) ->
     return pil_image
 
 
+def apply_chroma_key(image: Image.Image, key: str, tolerance: int, shadows: bool = True) -> Image.Image:
+    """
+    turn a flat background into an alpha channel so the pipeline takes its
+    has-alpha path and never invokes the background-removal model.
+
+    key: '' (off), 'auto' (background colour = median of the image border) or '#rrggbb'.
+    Only background-coloured pixels that connect to the image border become transparent,
+    so a same-coloured detail inside the subject is kept.
+
+    shadows: also key the subject's shadow on the backdrop. A shadow is the backdrop made
+    darker, which a plain colour-distance key leaves as a blob glued to the feet - and
+    Trellis then builds a floor out of it. On a neutral backdrop that means neutral pixels
+    darker than the backdrop; on a coloured one (chroma green), the same hue at any
+    brightness. Still border-connected only, so the subject's own dark greys survive.
+    """
+    if not key:
+        return image
+    import numpy as np
+    import cv2
+
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+        if image.getchannel("A").getextrema()[0] < 255:
+            # The image already has a background in its alpha: keep it, never replace it.
+            logger.info("chroma_key: the image already has transparency - leaving it as is")
+            return image
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+    if key == "auto":
+        border = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]], axis=0)
+        bg = np.median(border, axis=0)
+    else:
+        h = key.lstrip("#")  # validated by GenerationArgForm
+        bg = np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
+
+    looks_bg = np.linalg.norm(rgb - bg, axis=-1) <= float(tolerance)
+    if shadows:
+        mx = rgb.max(-1)
+        mn = rgb.min(-1)
+        sat = (mx - mn) / np.maximum(mx, 1.0)
+        lum = rgb.mean(-1)
+        bg_lum = float(bg.mean())
+        bg_sat = float((bg.max() - bg.min()) / max(float(bg.max()), 1.0))
+        if bg_sat < 0.15:
+            # Neutral backdrop: a shadow is a darker neutral grey. Cap the darkness so a
+            # near-black subject touching the ground is not eaten.
+            looks_bg |= (sat < 0.10) & (lum <= bg_lum + tolerance) & (lum >= 0.30 * bg_lum)
+        else:
+            # Coloured backdrop: same hue, any brightness (the classic chroma key).
+            def hue(c):
+                c = np.asarray(c, dtype=np.float32)
+                m = c.max(-1); n = c.min(-1); d = np.maximum(m - n, 1e-6)
+                r, g, b = c[..., 0], c[..., 1], c[..., 2]
+                h = np.where(m == r, (g - b) / d % 6, np.where(m == g, (b - r) / d + 2, (r - g) / d + 4))
+                return h / 6.0
+            dh = np.abs(hue(rgb) - hue(bg[None, None, :]))
+            dh = np.minimum(dh, 1.0 - dh)
+            looks_bg |= (dh <= 12 / 360) & (sat >= 0.25) & (lum >= 0.15 * bg_lum)
+    _, labels = cv2.connectedComponents(looks_bg.astype(np.uint8), connectivity=4)
+    touching = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+    touching = touching[touching != 0]
+    transparent = np.isin(labels, touching)
+    if transparent.all() or not transparent.any():
+        logger.warning("chroma_key: background covers %s of the image - leaving it opaque",
+                       "all" if transparent.all() else "none")
+        return image
+    alpha = np.where(transparent, 0, 255).astype(np.uint8)
+    rgba = np.dstack([rgb.astype(np.uint8), alpha])
+    logger.info(f"chroma_key: keyed {transparent.mean() * 100:.1f}% of the image as background (bg={bg.astype(int).tolist()})")
+    return Image.fromarray(rgba, "RGBA")
+
+
 async def _load_images_into_list(
     files: Optional[List[UploadFile]] = None,
     images_base64: Optional[List[str]] = None,
@@ -372,6 +443,7 @@ async def generate_no_preview(
         _validate_params([file or image_base64], arg)
 
         image = await _get_image(file, image_base64)
+        image = apply_chroma_key(image, arg.chroma_key, arg.chroma_tolerance, arg.chroma_shadows)
 
         update_current_generation(status=TaskStatus.PROCESSING, progress=10, message="Generating 3D mesh and texture...")
         await _run_pipeline_generate_and_export(image, arg)
@@ -425,7 +497,7 @@ async def generate_multi_no_preview(
         images = await _load_images_into_list(file_list, image_list_base64)
 
         # Trellis 2 uses a single image - take the first one
-        image = images[0]
+        image = apply_chroma_key(images[0], arg.chroma_key, arg.chroma_tolerance, arg.chroma_shadows)
 
         update_current_generation(status=TaskStatus.PROCESSING, progress=10, message="Generating 3D mesh and texture...")
         await _run_pipeline_generate_and_export(image, arg)

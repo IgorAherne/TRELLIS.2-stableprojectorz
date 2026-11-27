@@ -119,7 +119,12 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         new_pipeline.tex_slat_normalization = args['tex_slat_normalization']
 
         new_pipeline.image_cond_model = getattr(image_feature_extractor, args['image_cond_model']['name'])(**args['image_cond_model']['args'])
-        new_pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])
+        if os.environ.get('TRELLIS_NO_REMBG') == '1':
+            # Never load the background-removal model (RMBG-2.0). Inputs must then carry
+            # alpha (api_spz's chroma_key produces it from a flat background).
+            new_pipeline.rembg_model = None
+        else:
+            new_pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])
         
         new_pipeline.low_vram = args.get('low_vram', True)
         new_pipeline.default_pipeline_type = args.get('default_pipeline_type', '1024_cascade')
@@ -207,6 +212,11 @@ class Trellis2ImageTo3DPipeline(Pipeline):
         if has_alpha:
             output = input
         else:
+            if self.rembg_model is None:
+                raise ValueError(
+                    "Input image has no alpha channel and background removal is disabled "
+                    "(TRELLIS_NO_REMBG=1). Send an RGBA image, or pass chroma_key=auto to the API."
+                )
             input = input.convert('RGB')
             if self.low_vram:
                 self.rembg_model.to(self.device)
