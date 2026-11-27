@@ -141,6 +141,57 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             if self.rembg_model is not None:
                 self.rembg_model.to(device)
         self._convert_bf16_to_fp16_if_needed()
+        if self.low_vram and os.environ.get('TRELLIS_KEEP_CPU_WEIGHTS', '1') != '0':
+            self._keep_cpu_weights()
+
+    def _keep_cpu_weights(self):
+        """
+        low-VRAM mode moves each model to the GPU for its stage and back with .cpu().
+        The move back allocates a fresh CPU copy of every weight, and PyTorch's Windows
+        allocator (mimalloc) keeps the old copy's memory committed - private memory climbed
+        from ~14 GB to 25 GB within one generation. Weights never change at inference time,
+        so keep each model's CPU tensors alive while it is on the GPU and make .cpu() point
+        the parameters back at them: no reallocation, no GPU->CPU copy.
+        """
+        import types
+
+        def keep(module):
+            if getattr(module, '_cpu_weights_kept', None) is not None:
+                return
+            saved = {}
+            for mod in module.modules():
+                for k, p in mod._parameters.items():
+                    if p is not None and p.device.type == 'cpu':
+                        saved[(id(mod), 'p', k)] = p.data
+                for k, b in mod._buffers.items():
+                    if b is not None and b.device.type == 'cpu':
+                        saved[(id(mod), 'b', k)] = b
+            module._cpu_weights_kept = saved
+
+            def cpu(this):
+                for mod in this.modules():
+                    for k, p in mod._parameters.items():
+                        if p is None or p.device.type == 'cpu':
+                            continue
+                        s = saved.get((id(mod), 'p', k))
+                        if s is not None and s.shape == p.shape and s.dtype == p.dtype:
+                            p.data = s
+                        else:
+                            p.data = p.data.cpu()
+                    for k, b in list(mod._buffers.items()):
+                        if b is None or b.device.type == 'cpu':
+                            continue
+                        s = saved.get((id(mod), 'b', k))
+                        mod._buffers[k] = s if (s is not None and s.shape == b.shape and s.dtype == b.dtype) else b.cpu()
+                return this
+            module.cpu = types.MethodType(cpu, module)
+
+        for m in self.models.values():
+            if isinstance(m, nn.Module):
+                keep(m)
+        inner = getattr(self.image_cond_model, 'model', None)
+        if isinstance(inner, nn.Module):
+            keep(inner)
 
 
     def _convert_bf16_to_fp16_if_needed(self):

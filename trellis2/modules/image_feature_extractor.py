@@ -26,6 +26,9 @@ class DinoV2FeatureExtractor:
             model_to_load = model_name
 
         self.model = DINOv3ViTModel.from_pretrained(model_to_load)
+        if model_to_load == local_dir:
+            from ..models import memmap_rebind
+            memmap_rebind(self.model, os.path.join(local_dir, "model.safetensors"))
         self.model.eval()
         self._norm_mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1)
         self._norm_std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1)
@@ -107,6 +110,10 @@ class DinoV3FeatureExtractor:
 
         # We pass local_files_only=use_local to strict enforce not touching the internet
         self.model = DINOv3ViTModel.from_pretrained(target_path, local_files_only=use_local)
+        if use_local:
+            # Swap transformers' copy of the weights for read-only file views.
+            from ..models import memmap_rebind
+            memmap_rebind(self.model, os.path.join(target_path, "model.safetensors"))
         
         self.model.eval()
         self.image_size = image_size

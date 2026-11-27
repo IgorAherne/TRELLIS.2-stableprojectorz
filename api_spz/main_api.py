@@ -3,6 +3,9 @@ import logging
 import os
 import sys
 import platform
+# PyTorch on Windows allocates CPU memory through mimalloc, which by default keeps freed
+# memory committed. Purging at once hands it straight back. Must be set before torch loads.
+os.environ.setdefault('MIMALLOC_PURGE_DELAY', '0')
 import torch
 from contextlib import asynccontextmanager
 
