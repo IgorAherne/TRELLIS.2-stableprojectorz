@@ -517,6 +517,20 @@ class SparseUnetVaeEncoder(nn.Module):
             return z
     
     
+def _keep_subdivision_cache(cache: dict) -> None:
+    """Empty a SparseTensor spatial cache in place except its channel2spatial entries."""
+    for scale_key in list(cache.keys()):
+        per_scale = cache[scale_key]
+        if not isinstance(per_scale, dict):
+            del cache[scale_key]
+            continue
+        for k in list(per_scale.keys()):
+            if not str(k).startswith('channel2spatial'):
+                del per_scale[k]
+        if not per_scale:
+            del cache[scale_key]
+
+
 class SparseUnetVaeDecoder(nn.Module):
     """
     Sparse Swin Transformer Unet VAE model.
@@ -629,7 +643,13 @@ class SparseUnetVaeDecoder(nn.Module):
                     print(f"[VRAM] level {i} block {j} ({type(block).__name__}): alloc={a:.0f}MB  reserved={r:.0f}MB  voxels={h.feats.shape[0]}  ch={h.feats.shape[1]}")
             if self.low_vram:
                 res.cpu()
-            h._spatial_cache.clear()
+            if guide_subs is None and not self.pred_subdiv:
+                # Unguided decode (shape-conditioned texturing): the upsampling follows the
+                # encoder's subdivision, which lives in this same cache. Free the neighbour
+                # maps between levels as usual, but keep the channel2spatial entries.
+                _keep_subdivision_cache(h._spatial_cache)
+            else:
+                h._spatial_cache.clear()
             torch.cuda.empty_cache()
 
             if sp.config.DEBUG:
